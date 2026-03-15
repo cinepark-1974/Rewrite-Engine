@@ -527,6 +527,7 @@ def render_washing(data):
         problem_types = row.get('problem_types', [])
         pt_html = " ".join([f"<span style='background:#FFFBE6;color:#B8860B;border:1px solid #FFE066;padding:1px 8px;border-radius:12px;font-size:0.68rem;font-weight:700;'>{safe(p)}</span>" for p in problem_types])
         genre_fix = row.get('genre_fix', '')
+        preserve_note = row.get('preserve_note', '')
         st.markdown(f"""
         <div style="background:#FFFFFF;border:1px solid #E6E9EF;border-radius:10px;padding:16px;margin-bottom:12px;">
             <div style="margin-bottom:10px;">
@@ -547,6 +548,7 @@ def render_washing(data):
             <div style="background:#FFF8E1;padding:8px 12px;border-radius:6px;margin-top:8px;font-size:0.82rem;line-height:1.5;">
                 <strong style="color:#B8860B;">Risk:</strong> {safe(row.get('risk',''))}
             </div>
+            {"<div style='background:#F0F7FF;padding:8px 12px;border-radius:6px;margin-top:6px;font-size:0.82rem;line-height:1.5;border-left:3px solid #4A90D9;'><strong style='color:#2A5DB0;'>보존:</strong> " + safe(preserve_note) + "</div>" if preserve_note else ""}
             {"<div style='background:#EDFAF3;padding:8px 12px;border-radius:6px;margin-top:6px;font-size:0.82rem;line-height:1.5;'><strong style='color:#1A7A50;'>장르 복구:</strong> " + safe(genre_fix) + "</div>" if genre_fix else ""}
         </div>""", unsafe_allow_html=True)
 
