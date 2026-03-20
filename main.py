@@ -25,6 +25,12 @@ from prompt import (
 )
 
 # =================================================================
+# 모델 설정 — Writer Engine과 동일 정책
+# =================================================================
+ANTHROPIC_MODEL_WRITE = "claude-opus-4-6"      # 집필 (MOON 리라이팅) — 최고 품질
+ANTHROPIC_MODEL_PLAN  = "claude-sonnet-4-6"    # 분석 (CHRIS, SHIHO) — 비용 효율
+
+# =================================================================
 # [0] 페이지 설정 & 세션 초기화
 # =================================================================
 st.set_page_config(
@@ -211,16 +217,17 @@ def get_client():
         return None
     return anthropic.Anthropic(api_key=api_key)
 
-def call_claude(client, prompt, max_tokens=8192):
+def call_claude(client, prompt, max_tokens=8192, model=""):
+    use_model = model or ANTHROPIC_MODEL_WRITE
     try:
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=use_model,
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}]
         )
         return message.content[0].text
     except Exception as e:
-        st.error(f"API 오류: {e}")
+        st.error(f"API 오류 ({use_model}): {e}")
         return None
 
 
@@ -245,9 +252,9 @@ def extract_text(uploaded_file):
 # [5] 3단계 AI 실행 — prompt.py 연동
 # =================================================================
 def run_chris(text, client):
-    """CHRIS — Analysis"""
+    """CHRIS — Analysis (PLAN 모델)"""
     prompt = build_analysis_prompt(text)
-    raw = call_claude(client, prompt)
+    raw = call_claude(client, prompt, model=ANTHROPIC_MODEL_PLAN)
     data = parse_json(raw)
     if data:
         s = data.get('scores', {})
@@ -264,15 +271,15 @@ def run_chris(text, client):
     return data
 
 def run_shiho(text, analysis, client):
-    """SHIHO — Doctoring"""
+    """SHIHO — Doctoring (PLAN 모델)"""
     prompt = build_doctoring_prompt(text, analysis)
-    raw = call_claude(client, prompt, max_tokens=10000)
+    raw = call_claude(client, prompt, max_tokens=10000, model=ANTHROPIC_MODEL_PLAN)
     return parse_json(raw)
 
 def run_moon(text, analysis, washing, client):
-    """MOON — Rewrite"""
+    """MOON — Rewrite (WRITE 모델 — Opus)"""
     prompt = build_rewrite_prompt(text, analysis, washing)
-    raw = call_claude(client, prompt, max_tokens=16000)
+    raw = call_claude(client, prompt, max_tokens=16000, model=ANTHROPIC_MODEL_WRITE)
     result = parse_json(raw)
     if result and not result.get('rewriting', {}).get('scenes'):
         st.warning(f"scenes 파싱 실패. raw 앞 500자: {raw[:500] if raw else 'None'}")
@@ -1065,7 +1072,7 @@ def show_workspace():
 
     # ── CHRIS ──
     def do_chris():
-        with st.spinner("CHRIS가 시나리오를 분석하고 있습니다... (약 30~60초)"):
+        with st.spinner(f"CHRIS가 시나리오를 분석하고 있습니다 ({ANTHROPIC_MODEL_PLAN})..."):
             r = run_chris(text, client)
             if r:
                 st.session_state.analysis = r
@@ -1087,7 +1094,7 @@ def show_workspace():
 
     # ── SHIHO ──
     def do_shiho():
-        with st.spinner("SHIHO가 시퀀스를 워싱하고 있습니다... (약 30~60초)"):
+        with st.spinner(f"SHIHO가 시퀀스를 워싱하고 있습니다 ({ANTHROPIC_MODEL_PLAN})..."):
             r = run_shiho(text, st.session_state.analysis, client)
             if r:
                 st.session_state.washing = r
@@ -1108,7 +1115,7 @@ def show_workspace():
 
     # ── MOON ──
     def do_moon():
-        with st.spinner("MOON이 각색 원고를 작성하고 있습니다... (약 60~90초)"):
+        with st.spinner(f"MOON이 각색 원고를 작성하고 있습니다 ({ANTHROPIC_MODEL_WRITE})..."):
             r = run_moon(text, st.session_state.analysis, st.session_state.washing, client)
             if r:
                 st.session_state.rewriting = r
