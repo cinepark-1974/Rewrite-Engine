@@ -1036,12 +1036,14 @@ def agent_card(emoji, name, role, desc, status, key, btn_label, btn_fn, result_f
 # [12] 워크스페이스 페이지
 # =================================================================
 def show_workspace():
-    st.markdown("""
-    <div style="text-align:center;padding:1rem 0 0 0">
-        <div style="font-size:0.85rem;font-weight:700;color:#191970;letter-spacing:0.15em;margin-bottom:0;font-family:'Paperlogy','Pretendard',sans-serif;">B L U E &nbsp; J E A N S &nbsp; P I C T U R E S</div>
-        <div style="font-size:2.6rem;font-weight:900;color:#191970;font-family:'Playfair Display','Paperlogy','Georgia',serif;letter-spacing:-0.02em;margin-bottom:0.15rem;position:relative;display:inline-block;">REWRITE ENGINE</div>
-        <div style="font-size:0.72rem;font-weight:600;letter-spacing:0.18em;color:#8E8E99;margin-top:0.1rem;">Y O U N G &nbsp; · &nbsp; V I N T A G E &nbsp; · &nbsp; F R E E &nbsp; · &nbsp; I N N O V A T I V E</div>
-    </div>""", unsafe_allow_html=True)
+    st.markdown(
+        '<div style="text-align:center;padding:1rem 0 0 0">'
+        '<div class="header">B L U E &nbsp; J E A N S &nbsp; P I C T U R E S</div>'
+        '<div class="brand-title">REWRITE ENGINE</div>'
+        '<div class="sub">Y O U N G &nbsp; · &nbsp; V I N T A G E &nbsp; · &nbsp; F R E E &nbsp; · &nbsp; I N N O V A T I V E</div>'
+        '</div>',
+        unsafe_allow_html=True
+    )
     st.caption(f"집필: {ANTHROPIC_MODEL_WRITE} · 분석: {ANTHROPIC_MODEL_PLAN}")
 
     step = st.session_state.step
@@ -1195,12 +1197,14 @@ def show_workspace():
 # [13] 갤러리 페이지 (홈)
 # =================================================================
 def show_index():
-    st.markdown("""
-    <div style="text-align:center;padding:1rem 0 0 0">
-        <div style="font-size:0.85rem;font-weight:700;color:#191970;letter-spacing:0.15em;margin-bottom:0;font-family:'Paperlogy','Pretendard',sans-serif;">B L U E &nbsp; J E A N S &nbsp; P I C T U R E S</div>
-        <div style="font-size:2.6rem;font-weight:900;color:#191970;font-family:'Playfair Display','Paperlogy','Georgia',serif;letter-spacing:-0.02em;margin-bottom:0.15rem;">REWRITE ENGINE</div>
-        <div style="font-size:0.72rem;font-weight:600;letter-spacing:0.18em;color:#8E8E99;margin-top:0.1rem;">Y O U N G &nbsp; · &nbsp; V I N T A G E &nbsp; · &nbsp; F R E E &nbsp; · &nbsp; I N N O V A T I V E</div>
-    </div>""", unsafe_allow_html=True)
+    st.markdown(
+        '<div style="text-align:center;padding:1rem 0 0 0">'
+        '<div class="header">B L U E &nbsp; J E A N S &nbsp; P I C T U R E S</div>'
+        '<div class="brand-title">REWRITE ENGINE</div>'
+        '<div class="sub">Y O U N G &nbsp; · &nbsp; V I N T A G E &nbsp; · &nbsp; F R E E &nbsp; · &nbsp; I N N O V A T I V E</div>'
+        '</div>',
+        unsafe_allow_html=True
+    )
 
     _, c, _ = st.columns([1, 1, 1])
     with c:
