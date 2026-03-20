@@ -1196,10 +1196,10 @@ def show_workspace():
 # =================================================================
 def show_index():
     st.markdown("""
-    <div style="text-align:center;padding:60px 0 36px;">
-        <div style="font-size:0.72rem;font-weight:900;letter-spacing:0.5em;color:#FFCB05;">BLUE JEANS PICTURES</div>
-        <div style="font-size:3.6rem;font-weight:950;color:#191970;line-height:1;letter-spacing:-0.03em;margin:10px 0;">REWRITE ENGINE</div>
-        <div style="font-size:0.78rem;letter-spacing:0.2em;opacity:0.35;">v2.0 · YOUNG · VINTAGE · FREE · INNOVATIVE</div>
+    <div style="text-align:center;padding:1rem 0 0 0">
+        <div style="font-size:0.85rem;font-weight:700;color:#191970;letter-spacing:0.15em;margin-bottom:0;font-family:'Paperlogy','Pretendard',sans-serif;">B L U E &nbsp; J E A N S &nbsp; P I C T U R E S</div>
+        <div style="font-size:2.6rem;font-weight:900;color:#191970;font-family:'Playfair Display','Paperlogy','Georgia',serif;letter-spacing:-0.02em;margin-bottom:0.15rem;">REWRITE ENGINE</div>
+        <div style="font-size:0.72rem;font-weight:600;letter-spacing:0.18em;color:#8E8E99;margin-top:0.1rem;">Y O U N G &nbsp; · &nbsp; V I N T A G E &nbsp; · &nbsp; F R E E &nbsp; · &nbsp; I N N O V A T I V E</div>
     </div>""", unsafe_allow_html=True)
 
     _, c, _ = st.columns([1, 1, 1])
