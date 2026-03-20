@@ -107,13 +107,7 @@ def apply_design():
     st.markdown("""
     <style>
     @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
-    @import url('https://cdn.jsdelivr.net/gh/projectnoonnu/2408-3@latest/Paperlogy.css');
-    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&display=swap');
-    :root {
-        color-scheme: light only !important;
-        --display: 'Playfair Display', 'Paperlogy', 'Georgia', serif;
-        --heading: 'Paperlogy', 'Pretendard', sans-serif;
-    }
+    :root { color-scheme: light only !important; }
     .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"],
     [data-testid="stMain"], [data-testid="stMainBlockContainer"],
     [data-testid="block-container"], body { background-color: #FAFAFA !important; }
@@ -136,21 +130,6 @@ def apply_design():
     [data-testid="stExpander"] details > div {
         border: 1px solid #E0E4F0 !important; border-top: none !important;
         border-radius: 0 0 8px 8px !important; padding: 16px !important; background: #FAFAFA !important;
-    }
-    .header {
-        font-size: 0.85rem; font-weight: 700; color: #191970;
-        letter-spacing: 0.15em; margin-bottom: 0;
-        font-family: 'Paperlogy', 'Pretendard', sans-serif;
-    }
-    .brand-title {
-        font-size: 2.6rem; font-weight: 900; color: #191970;
-        font-family: 'Playfair Display', 'Paperlogy', 'Georgia', serif;
-        letter-spacing: -0.02em; margin-bottom: 0.15rem;
-        position: relative; display: inline-block;
-    }
-    .sub {
-        font-size: 0.72rem; font-weight: 600; letter-spacing: 0.18em;
-        color: #8E8E99; margin-top: 0.1rem;
     }
     .agent-card {
         background: #FFFFFF; border: 1px solid #E6E9EF; border-radius: 16px;
@@ -1036,15 +1015,12 @@ def agent_card(emoji, name, role, desc, status, key, btn_label, btn_fn, result_f
 # [12] 워크스페이스 페이지
 # =================================================================
 def show_workspace():
-    st.markdown(
-        '<div style="text-align:center;padding:1rem 0 0 0">'
-        '<div class="header">B L U E &nbsp; J E A N S &nbsp; P I C T U R E S</div>'
-        '<div class="brand-title">REWRITE ENGINE</div>'
-        '<div class="sub">Y O U N G &nbsp; · &nbsp; V I N T A G E &nbsp; · &nbsp; F R E E &nbsp; · &nbsp; I N N O V A T I V E</div>'
-        '</div>',
-        unsafe_allow_html=True
-    )
-    st.caption(f"집필: {ANTHROPIC_MODEL_WRITE} · 분석: {ANTHROPIC_MODEL_PLAN}")
+    st.markdown("""
+    <div style="text-align:center;padding:36px 0 8px;">
+        <div style="font-size:0.72rem;font-weight:900;letter-spacing:0.5em;color:#FFCB05;margin-bottom:6px;">BLUE JEANS PICTURES</div>
+        <div style="font-size:2.8rem;font-weight:950;color:#191970;line-height:1;letter-spacing:-0.03em;">REWRITE ENGINE</div>
+        <div style="margin-top:6px;font-size:0.75rem;letter-spacing:0.15em;opacity:0.4;">v2.0 · YOUNG · VINTAGE · FREE · INNOVATIVE</div>
+    </div>""", unsafe_allow_html=True)
 
     step = st.session_state.step
     render_step_bar(step)
@@ -1197,14 +1173,12 @@ def show_workspace():
 # [13] 갤러리 페이지 (홈)
 # =================================================================
 def show_index():
-    st.markdown(
-        '<div style="text-align:center;padding:1rem 0 0 0">'
-        '<div class="header">B L U E &nbsp; J E A N S &nbsp; P I C T U R E S</div>'
-        '<div class="brand-title">REWRITE ENGINE</div>'
-        '<div class="sub">Y O U N G &nbsp; · &nbsp; V I N T A G E &nbsp; · &nbsp; F R E E &nbsp; · &nbsp; I N N O V A T I V E</div>'
-        '</div>',
-        unsafe_allow_html=True
-    )
+    st.markdown("""
+    <div style="text-align:center;padding:60px 0 36px;">
+        <div style="font-size:0.72rem;font-weight:900;letter-spacing:0.5em;color:#FFCB05;">BLUE JEANS PICTURES</div>
+        <div style="font-size:3.6rem;font-weight:950;color:#191970;line-height:1;letter-spacing:-0.03em;margin:10px 0;">REWRITE ENGINE</div>
+        <div style="font-size:0.78rem;letter-spacing:0.2em;opacity:0.35;">v2.0 · YOUNG · VINTAGE · FREE · INNOVATIVE</div>
+    </div>""", unsafe_allow_html=True)
 
     _, c, _ = st.columns([1, 1, 1])
     with c:
