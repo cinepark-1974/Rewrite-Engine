@@ -612,7 +612,7 @@ def run_jean(text, analysis, client):
     from prompt import SYSTEM_PROMPT
     prompt = build_doctoring_prompt(text, analysis)
     user_prompt = prompt.replace(SYSTEM_PROMPT, '').strip()
-    raw = call_claude(client, user_prompt, max_tokens=8000, system=SYSTEM_PROMPT)
+    raw = call_claude(client, user_prompt, max_tokens=12000, system=SYSTEM_PROMPT)
     return parse_json(raw)
 
 def _run_jean_OLD_UNUSED(text, analysis, client):
@@ -1121,32 +1121,8 @@ def render_analysis(data):
                      f"border:1px solid {'#2EC484' if genre_fun_alive else '#FF6432'};padding:3px 11px;border-radius:20px;font-size:0.75rem;"
                      f"font-weight:700;margin-left:10px;'>{'✓ 장르적 재미 작동' if genre_fun_alive else '✗ 장르적 재미 약함'}</span>")
 
-    # Hook/Punch 체크
-    hp = genre.get('hook_punch_check', {})
-    hp_html = ""
-    if hp:
-        hook_ok = hp.get('hook_present', False)
-        punch_ok = hp.get('punch_present', False)
-        hp_html = f"""
-        <div style="display:flex;gap:10px;margin:12px 0;">
-            <div style="flex:1;background:{'#EDFAF3' if hook_ok else '#FFF3EE'};padding:10px;border-radius:8px;border-left:3px solid {'#2EC484' if hook_ok else '#FF6432'};">
-                <div style="font-size:0.72rem;font-weight:800;color:{'#1A7A50' if hook_ok else '#CC3300'};margin-bottom:4px;">{'✓' if hook_ok else '✗'} Hook (오프닝)</div>
-                <div style="font-size:0.84rem;color:#191970;line-height:1.6;">{safe(hp.get('hook_note',''))}</div>
-            </div>
-            <div style="flex:1;background:{'#EDFAF3' if punch_ok else '#FFF3EE'};padding:10px;border-radius:8px;border-left:3px solid {'#2EC484' if punch_ok else '#FF6432'};">
-                <div style="font-size:0.72rem;font-weight:800;color:{'#1A7A50' if punch_ok else '#CC3300'};margin-bottom:4px;">{'✓' if punch_ok else '✗'} Punch (결정타)</div>
-                <div style="font-size:0.84rem;color:#191970;line-height:1.6;">{safe(hp.get('punch_note',''))}</div>
-            </div>
-        </div>"""
-
-    # 실패 패턴
+    # 실패 패턴 데이터 (렌더링은 아래에서 별도 st.markdown으로)
     fail_patterns = genre.get('fail_patterns_found', [])
-    fail_html = ""
-    if fail_patterns:
-        fail_html = "<div style='margin:10px 0;'><strong style='font-size:0.78rem;color:#CC3300;display:block;margin-bottom:6px;'>⚠️ 발견된 실패 패턴</strong>" + "".join([
-            f"<span style='background:#FFF3EE;color:#CC3300;border:1px solid #FF6432;padding:3px 10px;border-radius:20px;font-size:0.75rem;font-weight:700;margin-right:6px;margin-bottom:6px;display:inline-block;'>⚠ {safe(f)}</span>"
-            for f in fail_patterns
-        ]) + "</div>"
 
     st.markdown(f"""
     <div class="report-card">
@@ -1161,11 +1137,66 @@ def render_analysis(data):
         </div>
         <div style="margin-bottom:10px;"><strong style="font-size:0.78rem;color:#191970;display:block;margin-bottom:6px;">✅ 장르 필수 요소 체크</strong>{tags}</div>
         {"<div style='margin-bottom:12px;'><strong style='font-size:0.78rem;color:#CC3300;display:block;margin-bottom:6px;'>❌ 누락된 장르 필수 요소</strong>" + missing_html + "</div>" if missing else ""}
-        {fail_html}
-        {hp_html}
-        {"<div style='background:#FFFBE6;border-left:3px solid #FFCB05;padding:14px;border-radius:8px;line-height:1.8;color:#191970;margin-bottom:10px;'><strong style='font-size:0.75rem;color:#B8860B;display:block;margin-bottom:6px;'>🎬 장르적 재미 진단</strong>" + genre_fun_diagnosis + "</div>" if genre_fun_diagnosis else ""}
-        <div style="background:#EEF0FA;padding:16px;border-radius:8px;line-height:1.8;color:#191970;">{safe(genre.get('doctoring', ''))}</div>
     </div>""", unsafe_allow_html=True)
+
+    # 실패 패턴 (별도 렌더링)
+    if fail_patterns:
+        fail_items = "".join([
+            f"<span style='background:#FFF3EE;color:#CC3300;border:1px solid #FF6432;padding:3px 10px;border-radius:20px;font-size:0.75rem;font-weight:700;margin-right:6px;margin-bottom:6px;display:inline-block;'>⚠ {safe(f)}</span>"
+            for f in fail_patterns
+        ])
+        st.markdown(f"""
+        <div class="report-card" style="margin-top:-8px;">
+            <strong style="font-size:0.78rem;color:#CC3300;display:block;margin-bottom:6px;">⚠️ 발견된 실패 패턴</strong>
+            {fail_items}
+        </div>""", unsafe_allow_html=True)
+
+    # Hook/Punch 체크 (별도 렌더링)
+    hp = genre.get('hook_punch_check', {})
+    if hp:
+        hook_ok = hp.get('hook_present', False)
+        punch_ok = hp.get('punch_present', False)
+        hook_bg = '#EDFAF3' if hook_ok else '#FFF3EE'
+        hook_border = '#2EC484' if hook_ok else '#FF6432'
+        hook_color = '#1A7A50' if hook_ok else '#CC3300'
+        hook_icon = '✓' if hook_ok else '✗'
+        punch_bg = '#EDFAF3' if punch_ok else '#FFF3EE'
+        punch_border = '#2EC484' if punch_ok else '#FF6432'
+        punch_color = '#1A7A50' if punch_ok else '#CC3300'
+        punch_icon = '✓' if punch_ok else '✗'
+        hook_note = safe(hp.get('hook_note', ''))
+        punch_note = safe(hp.get('punch_note', ''))
+        st.markdown(f"""
+        <div class="report-card" style="margin-top:-8px;">
+            <div style="display:flex;gap:10px;">
+                <div style="flex:1;background:{hook_bg};padding:10px;border-radius:8px;border-left:3px solid {hook_border};">
+                    <div style="font-size:0.72rem;font-weight:800;color:{hook_color};margin-bottom:4px;">{hook_icon} Hook (오프닝)</div>
+                    <div style="font-size:0.84rem;color:#191970;line-height:1.6;">{hook_note}</div>
+                </div>
+                <div style="flex:1;background:{punch_bg};padding:10px;border-radius:8px;border-left:3px solid {punch_border};">
+                    <div style="font-size:0.72rem;font-weight:800;color:{punch_color};margin-bottom:4px;">{punch_icon} Punch (결정타)</div>
+                    <div style="font-size:0.84rem;color:#191970;line-height:1.6;">{punch_note}</div>
+                </div>
+            </div>
+        </div>""", unsafe_allow_html=True)
+
+    # 장르적 재미 진단 (별도 렌더링)
+    if genre_fun_diagnosis:
+        st.markdown(f"""
+        <div class="report-card" style="margin-top:-8px;">
+            <div style="background:#FFFBE6;border-left:3px solid #FFCB05;padding:14px;border-radius:8px;line-height:1.8;color:#191970;">
+                <strong style="font-size:0.75rem;color:#B8860B;display:block;margin-bottom:6px;">🎬 장르적 재미 진단</strong>
+                {genre_fun_diagnosis}
+            </div>
+        </div>""", unsafe_allow_html=True)
+
+    # 장르 종합 코멘트
+    doctoring = safe(genre.get('doctoring', ''))
+    if doctoring:
+        st.markdown(f"""
+        <div class="report-card" style="margin-top:-8px;">
+            <div style="background:#EEF0FA;padding:16px;border-radius:8px;line-height:1.8;color:#191970;">{doctoring}</div>
+        </div>""", unsafe_allow_html=True)
 
 
 def render_washing(data):
