@@ -485,22 +485,33 @@ def get_client():
         return None
     return anthropic.Anthropic(api_key=api_key)
 
-def call_claude(client, prompt, max_tokens=6000, system=None):
-    try:
-        kwargs = dict(
-            model="claude-opus-4-6",
-            max_tokens=max_tokens,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        if system:
-            kwargs["system"] = system
-        message = client.messages.create(**kwargs)
-        if message.stop_reason == "max_tokens":
-            st.warning(f"⚠️ 응답이 max_tokens({max_tokens})에서 잘렸습니다. JSON이 불완전할 수 있습니다.")
-        return message.content[0].text
-    except Exception as e:
-        st.error(f"API 오류 상세: {type(e).__name__} — {e}")
-        return None
+def call_claude(client, prompt, max_tokens=6000, system=None, retries=2):
+    """Claude API 호출. max_tokens 잘림 시 토큰을 50% 증량하여 자동 재시도."""
+    current_tokens = max_tokens
+    for attempt in range(1 + retries):
+        try:
+            kwargs = dict(
+                model="claude-opus-4-6",
+                max_tokens=current_tokens,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            if system:
+                kwargs["system"] = system
+            message = client.messages.create(**kwargs)
+
+            if message.stop_reason == "max_tokens":
+                if attempt < retries:
+                    next_tokens = min(int(current_tokens * 1.5), 32000)
+                    st.info(f"🔄 응답이 {current_tokens} 토큰에서 잘렸습니다. {next_tokens} 토큰으로 재시도합니다... ({attempt+2}/{1+retries}회차)")
+                    current_tokens = next_tokens
+                    continue
+                else:
+                    st.warning(f"⚠️ {retries}회 재시도 후에도 응답이 {current_tokens} 토큰에서 잘렸습니다. 결과가 불완전할 수 있습니다.")
+            return message.content[0].text
+        except Exception as e:
+            st.error(f"API 오류 상세: {type(e).__name__} — {e}")
+            return None
+    return None
 
 # =================================================================
 # [3] PDF 추출
