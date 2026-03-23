@@ -5,6 +5,11 @@ import json, re, html, io
 import plotly.express as px
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from prompt import (
+    SYSTEM_PROMPT, GENRE_RULES,
+    build_analysis_prompt, build_doctoring_prompt, build_rewrite_prompt,
+    get_report_filename
+)
 
 # =================================================================
 # [0] 페이지 설정 & 세션 초기화
@@ -474,9 +479,21 @@ def extract_text(uploaded_file):
         return None
 
 # =================================================================
-# [4] BLUE — 분석 비서
+# [4] BLUE — 분석 비서 (prompt.py 빌더 사용)
 # =================================================================
 def run_blue(text, client):
+    prompt = build_analysis_prompt(text)
+    raw = call_claude(client, prompt)
+    data = parse_json(raw)
+    if data:
+        s = data.get('scores', {})
+        data['mark'] = {'final': round(
+            s.get('structure', 0) * 0.3 + s.get('hero', 0) * 0.3 +
+            s.get('concept', 0) * 0.2 + s.get('genre', 0) * 0.2, 1
+        )}
+    return data
+
+def _run_blue_OLD_UNUSED(text, client):
     prompt = f"""
 당신은 글로벌 스튜디오의 수석 각본 분석가(Senior Script Consultant)입니다.
 전 세계 시청자를 사로잡을 수 있는 글로벌 스탠다드 시각으로 시나리오를 정밀 진단하세요.
@@ -541,9 +558,14 @@ tension_data는 숫자만.
     return data
 
 # =================================================================
-# [5] JEAN — 워싱 비서
+# [5] JEAN — 워싱 비서 (prompt.py 빌더 사용)
 # =================================================================
 def run_jean(text, analysis, client):
+    prompt = build_doctoring_prompt(text, analysis)
+    raw = call_claude(client, prompt, max_tokens=8000)
+    return parse_json(raw)
+
+def _run_jean_OLD_UNUSED(text, analysis, client):
     prompt = f"""당신은 글로벌 OTT와 극장 영화 양쪽에서 검증된 세계 최고의 쇼러너(Showrunner)입니다.
 작품: {analysis.get('title', '')}
 장르: {analysis.get('genre_suitability', {}).get('genre_name', '')}
@@ -623,9 +645,19 @@ JSON만 출력. 마크다운 금지.
     return parse_json(raw)
 
 # =================================================================
-# [6] PICTURES — 리라이팅 비서
+# [6] PICTURES — 리라이팅 비서 (prompt.py 빌더 사용)
 # =================================================================
 def run_pictures(text, washing, client):
+    # analysis는 session_state에서 가져옴
+    analysis = st.session_state.get('analysis', {})
+    prompt = build_rewrite_prompt(text, analysis, washing)
+    raw = call_claude(client, prompt, max_tokens=16000)
+    result = parse_json(raw)
+    if result and not result.get('rewriting', {}).get('scenes'):
+        st.warning(f"⚠️ scenes 파싱 실패. raw 앞 500자: {raw[:500] if raw else 'None'}")
+    return result
+
+def _run_pictures_OLD_UNUSED(text, washing, client):
     suggestions = washing.get('suggestions', [])
     washing_table = washing.get('washing_table', [])
     dialogue = washing.get('dialogue_analysis', {})
