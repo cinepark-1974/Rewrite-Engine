@@ -484,13 +484,18 @@ def extract_text(uploaded_file):
 def run_blue(text, client):
     prompt = build_analysis_prompt(text)
     raw = call_claude(client, prompt)
+    if not raw:
+        st.error("❌ API 응답이 없습니다. API 키와 모델명을 확인하세요.")
+        return None
     data = parse_json(raw)
-    if data:
-        s = data.get('scores', {})
-        data['mark'] = {'final': round(
-            s.get('structure', 0) * 0.3 + s.get('hero', 0) * 0.3 +
-            s.get('concept', 0) * 0.2 + s.get('genre', 0) * 0.2, 1
-        )}
+    if not data:
+        st.error(f"❌ JSON 파싱 실패. 응답 앞 300자: {raw[:300]}")
+        return None
+    s = data.get('scores', {})
+    data['mark'] = {'final': round(
+        s.get('structure', 0) * 0.3 + s.get('hero', 0) * 0.3 +
+        s.get('concept', 0) * 0.2 + s.get('genre', 0) * 0.2, 1
+    )}
     return data
 
 def _run_blue_OLD_UNUSED(text, client):
