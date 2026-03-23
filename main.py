@@ -434,14 +434,32 @@ def safe(text):
 
 def parse_json(raw):
     if not raw: return None
+    # 1차: 그대로 시도
     try:
         return json.loads(raw, strict=False)
     except:
-        try:
-            cleaned = re.sub(r'```json\s*|```\s*', '', raw).strip()
-            return json.loads(cleaned, strict=False)
-        except:
-            return None
+        pass
+    # 2차: 마크다운 코드블록 제거
+    try:
+        cleaned = re.sub(r'```json\s*|```\s*', '', raw).strip()
+        return json.loads(cleaned, strict=False)
+    except:
+        pass
+    # 3차: JSON 주석 제거 (// ...)
+    try:
+        no_comment = re.sub(r'//[^\n]*', '', cleaned)
+        return json.loads(no_comment, strict=False)
+    except:
+        pass
+    # 4차: JSON 블록만 추출 (첫 { 부터 마지막 } 까지)
+    try:
+        start = raw.index('{')
+        end   = raw.rindex('}') + 1
+        chunk = raw[start:end]
+        return json.loads(chunk, strict=False)
+    except:
+        pass
+    return None
 
 def get_client():
     api_key = st.secrets.get("ANTHROPIC_API_KEY")
