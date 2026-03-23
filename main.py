@@ -1321,10 +1321,9 @@ def create_docx(item):
     json_path   = os.path.join(tmp_dir, "report_data.json")
     out_path    = os.path.join(tmp_dir, "report_output.docx")
 
-    # gen_docx.js를 tmp_dir에 복사 (스크립트가 같은 디렉토리에서 실행되어야 함)
+    # gen_docx.js를 tmp_dir에 복사
     script_src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gen_docx.js")
     if not os.path.exists(script_src):
-        # 배포 환경 fallback 경로들
         for candidate in ["/app/gen_docx.js", "./gen_docx.js", "/home/claude/gen_docx.js"]:
             if os.path.exists(candidate):
                 script_src = candidate
@@ -1334,6 +1333,18 @@ def create_docx(item):
         shutil.copy2(script_src, script_path)
     except Exception:
         return _create_docx_fallback(item)
+
+    # docx npm 패키지 설치 (Streamlit Cloud에 node_modules 없을 경우)
+    nm_path = os.path.join(tmp_dir, "node_modules", "docx")
+    if not os.path.exists(nm_path):
+        npm_result = subprocess.run(
+            ["npm", "install", "docx"],
+            capture_output=True, text=True, timeout=120,
+            cwd=tmp_dir
+        )
+        if npm_result.returncode != 0:
+            st.warning(f"npm install 실패: {npm_result.stderr[:200]}")
+            return _create_docx_fallback(item)
 
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(report_data, f, ensure_ascii=False)
