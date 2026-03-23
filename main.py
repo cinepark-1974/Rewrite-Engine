@@ -442,9 +442,11 @@ def parse_json(raw):
             return None
 
     def clean(s):
+        # BOM 및 유니코드 공백 제거
+        s = s.strip().lstrip('\ufeff\u200b\u00a0\u200e\u200f')
         # 마크다운 코드블록 제거
         s = re.sub(r'```json\s*|```\s*', '', s).strip()
-        # // 주석 제거 (JSON 값 안의 URL 등 오탐 방지: ":" 뒤 공백+// 패턴만)
+        # // 주석 제거
         s = re.sub(r'\s*//[^\n"]*', '', s)
         return s
 
@@ -467,6 +469,13 @@ def parse_json(raw):
     except:
         pass
 
+    # 4차: simplejson으로 재시도 (더 관대한 파서)
+    try:
+        import simplejson
+        return simplejson.loads(cleaned)
+    except:
+        pass
+
     return None
 
 def get_client():
@@ -476,13 +485,16 @@ def get_client():
         return None
     return anthropic.Anthropic(api_key=api_key)
 
-def call_claude(client, prompt, max_tokens=6000):
+def call_claude(client, prompt, max_tokens=6000, system=None):
     try:
-        message = client.messages.create(
+        kwargs = dict(
             model="claude-opus-4-6",
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}]
         )
+        if system:
+            kwargs["system"] = system
+        message = client.messages.create(**kwargs)
         return message.content[0].text
     except Exception as e:
         st.error(f"API 오류 상세: {type(e).__name__} — {e}")
@@ -508,18 +520,17 @@ def extract_text(uploaded_file):
 # [4] BLUE — 분석 비서 (prompt.py 빌더 사용)
 # =================================================================
 def run_blue(text, client):
+    from prompt import SYSTEM_PROMPT
     prompt = build_analysis_prompt(text)
-    raw = call_claude(client, prompt)
+    # SYSTEM_PROMPT가 user 메시지 안에 포함되어 있으므로 제거 후 system으로 분리
+    user_prompt = prompt.replace(SYSTEM_PROMPT, '').strip()
+    raw = call_claude(client, user_prompt, system=SYSTEM_PROMPT)
     if not raw:
-        st.error("❌ API 응답이 없습니다. API 키와 모델명을 확인하세요.")
+        st.error("❌ API 응답이 없습니다.")
         return None
     data = parse_json(raw)
     if not data:
-        # 파싱 실패 원인 파악용 디버그
-        try:
-            json.loads(raw, strict=False)
-        except json.JSONDecodeError as e:
-            st.error(f"❌ JSON 파싱 실패 — 오류: {e.msg} (위치: {e.lineno}번째 줄 {e.colno}번째 문자)\n응답 앞 500자: {raw[:500]}")
+        st.error(f"❌ JSON 파싱 실패. 응답 앞 300자:\n{raw[:300]}")
         return None
     s = data.get('scores', {})
     data['mark'] = {'final': round(
@@ -596,8 +607,10 @@ tension_data는 숫자만.
 # [5] JEAN — 워싱 비서 (prompt.py 빌더 사용)
 # =================================================================
 def run_jean(text, analysis, client):
+    from prompt import SYSTEM_PROMPT
     prompt = build_doctoring_prompt(text, analysis)
-    raw = call_claude(client, prompt, max_tokens=8000)
+    user_prompt = prompt.replace(SYSTEM_PROMPT, '').strip()
+    raw = call_claude(client, user_prompt, max_tokens=8000, system=SYSTEM_PROMPT)
     return parse_json(raw)
 
 def _run_jean_OLD_UNUSED(text, analysis, client):
@@ -683,10 +696,11 @@ JSON만 출력. 마크다운 금지.
 # [6] PICTURES — 리라이팅 비서 (prompt.py 빌더 사용)
 # =================================================================
 def run_pictures(text, washing, client):
-    # analysis는 session_state에서 가져옴
+    from prompt import SYSTEM_PROMPT
     analysis = st.session_state.get('analysis', {})
     prompt = build_rewrite_prompt(text, analysis, washing)
-    raw = call_claude(client, prompt, max_tokens=16000)
+    user_prompt = prompt.replace(SYSTEM_PROMPT, '').strip()
+    raw = call_claude(client, user_prompt, max_tokens=16000, system=SYSTEM_PROMPT)
     result = parse_json(raw)
     if result and not result.get('rewriting', {}).get('scenes'):
         st.warning(f"⚠️ scenes 파싱 실패. raw 앞 500자: {raw[:500] if raw else 'None'}")
