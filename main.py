@@ -434,31 +434,39 @@ def safe(text):
 
 def parse_json(raw):
     if not raw: return None
-    # 1차: 그대로 시도
-    try:
-        return json.loads(raw, strict=False)
-    except:
-        pass
-    # 2차: 마크다운 코드블록 제거
-    try:
-        cleaned = re.sub(r'```json\s*|```\s*', '', raw).strip()
-        return json.loads(cleaned, strict=False)
-    except:
-        pass
-    # 3차: JSON 주석 제거 (// ...)
-    try:
-        no_comment = re.sub(r'//[^\n]*', '', cleaned)
-        return json.loads(no_comment, strict=False)
-    except:
-        pass
-    # 4차: JSON 블록만 추출 (첫 { 부터 마지막 } 까지)
+
+    def try_parse(s):
+        try:
+            return json.loads(s, strict=False)
+        except:
+            return None
+
+    def clean(s):
+        # 마크다운 코드블록 제거
+        s = re.sub(r'```json\s*|```\s*', '', s).strip()
+        # // 주석 제거 (JSON 값 안의 URL 등 오탐 방지: ":" 뒤 공백+// 패턴만)
+        s = re.sub(r'\s*//[^\n"]*', '', s)
+        return s
+
+    # 1차: 그대로
+    r = try_parse(raw)
+    if r: return r
+
+    # 2차: 클린업 후
+    cleaned = clean(raw)
+    r = try_parse(cleaned)
+    if r: return r
+
+    # 3차: { } 블록 추출 후 클린업
     try:
         start = raw.index('{')
         end   = raw.rindex('}') + 1
-        chunk = raw[start:end]
-        return json.loads(chunk, strict=False)
+        chunk = clean(raw[start:end])
+        r = try_parse(chunk)
+        if r: return r
     except:
         pass
+
     return None
 
 def get_client():
@@ -507,7 +515,11 @@ def run_blue(text, client):
         return None
     data = parse_json(raw)
     if not data:
-        st.error(f"❌ JSON 파싱 실패. 응답 앞 300자: {raw[:300]}")
+        # 파싱 실패 원인 파악용 디버그
+        try:
+            json.loads(raw, strict=False)
+        except json.JSONDecodeError as e:
+            st.error(f"❌ JSON 파싱 실패 — 오류: {e.msg} (위치: {e.lineno}번째 줄 {e.colno}번째 문자)\n응답 앞 500자: {raw[:500]}")
         return None
     s = data.get('scores', {})
     data['mark'] = {'final': round(
