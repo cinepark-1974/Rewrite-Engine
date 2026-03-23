@@ -445,7 +445,7 @@ def get_client():
         return None
     return anthropic.Anthropic(api_key=api_key)
 
-def call_claude(client, prompt, max_tokens=8192):
+def call_claude(client, prompt, max_tokens=6000):
     try:
         message = client.messages.create(
             model="claude-opus-4-6",
@@ -617,9 +617,9 @@ JSON만 출력. 마크다운 금지.
 }}
 
 시나리오:
-{text[:55000]}
+{text[:40000]}
 """
-    raw = call_claude(client, prompt)
+    raw = call_claude(client, prompt, max_tokens=8000)
     return parse_json(raw)
 
 # =================================================================
@@ -732,7 +732,7 @@ def run_pictures(text, washing, client):
 [분석할 시나리오]
 {text[:45000]}
 """
-    raw = call_claude(client, prompt, max_tokens=12000)
+    raw = call_claude(client, prompt, max_tokens=16000)
     result = parse_json(raw)
     # scenes가 비어있으면 raw 확인용 (개발 디버그)
     if result and not result.get('rewriting', {}).get('scenes'):
@@ -1663,13 +1663,18 @@ def show_workspace():
     # ── BLUE 비서 ──
     def do_chris():
         with st.spinner("🔍 Chris가 시나리오를 분석하고 있습니다... (약 30~60초 소요)"):
+            # API 키 확인
+            api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+            if not api_key:
+                st.error("❌ ANTHROPIC_API_KEY가 Secrets에 없습니다. Streamlit Cloud → Settings → Secrets 확인")
+                return
             r = run_blue(text, client)
             if r:
                 st.session_state.analysis = r
                 st.session_state.step = 2
                 st.rerun()
             else:
-                st.error("분석 실패. 다시 시도해주세요.")
+                st.error("분석 실패. 위의 API 오류 메시지를 확인하세요.")
 
     chris_st = 'done' if st.session_state.analysis else 'active'
     agent_card("🔍", "CHRIS", "Senior Script Analyst",
@@ -1695,7 +1700,7 @@ def show_workspace():
                 st.session_state.step = 3
                 st.rerun()
             else:
-                st.error("워싱 실패. 다시 시도해주세요.")
+                st.error("워싱 실패 — API 오류 메시지를 위에서 확인하세요.")
 
     shiho_st = 'done' if st.session_state.washing else 'active'
     agent_card("🧹", "SHIHO", "Script Doctor",
@@ -1727,7 +1732,7 @@ def show_workspace():
                 st.session_state.step = 4
                 st.rerun()
             else:
-                st.error("리라이팅 실패. 다시 시도해주세요.")
+                st.error("리라이팅 실패. 위의 API 오류 메시지를 확인하세요.")
 
     moon_st = 'done' if st.session_state.rewriting else 'active'
     agent_card("✍️", "MOON", "Senior Screenwriter",
