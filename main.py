@@ -495,6 +495,8 @@ def call_claude(client, prompt, max_tokens=6000, system=None):
         if system:
             kwargs["system"] = system
         message = client.messages.create(**kwargs)
+        if message.stop_reason == "max_tokens":
+            st.warning(f"⚠️ 응답이 max_tokens({max_tokens})에서 잘렸습니다. JSON이 불완전할 수 있습니다.")
         return message.content[0].text
     except Exception as e:
         st.error(f"API 오류 상세: {type(e).__name__} — {e}")
@@ -524,7 +526,7 @@ def run_blue(text, client):
     prompt = build_analysis_prompt(text)
     # SYSTEM_PROMPT가 user 메시지 안에 포함되어 있으므로 제거 후 system으로 분리
     user_prompt = prompt.replace(SYSTEM_PROMPT, '').strip()
-    raw = call_claude(client, user_prompt, system=SYSTEM_PROMPT)
+    raw = call_claude(client, user_prompt, max_tokens=12000, system=SYSTEM_PROMPT)
     if not raw:
         st.error("❌ API 응답이 없습니다.")
         return None
@@ -616,7 +618,7 @@ def run_jean(text, analysis, client):
 def _run_jean_OLD_UNUSED(text, analysis, client):
     prompt = f"""당신은 글로벌 OTT와 극장 영화 양쪽에서 검증된 세계 최고의 쇼러너(Showrunner)입니다.
 작품: {analysis.get('title', '')}
-장르: {analysis.get('genre_suitability', {}).get('genre_name', '')}
+장르: {analysis.get('genre_compliance', {}).get('genre_key', analysis.get('genre_suitability', {}).get('genre_name', ''))}
 
 시나리오의 시퀀스를 진단하고, 대사를 4축으로 심층 분석하고, 각색 제안을 작성하세요.
 JSON만 출력. 마크다운 금지.
@@ -1087,11 +1089,20 @@ def render_analysis(data):
             st.plotly_chart(fig2, use_container_width=True, config={'displayModeBar': False})
 
     # 8. 장르
-    genre = data.get('genre_suitability', {})
-    tags = "".join([
-        f"<span style='background:#EDFAF3;color:#1A7A50;border:1px solid #2EC484;padding:3px 11px;border-radius:20px;font-size:0.75rem;font-weight:700;margin-right:7px;margin-bottom:6px;display:inline-block;'>✓ {safe(c)}</span>"
-        for c in genre.get('checks', [])
-    ])
+    genre = data.get('genre_compliance', {})
+    # must_have_check 렌더링 (새 스키마)
+    must_checks = genre.get('must_have_check', [])
+    if must_checks:
+        tags = "".join([
+            f"<span style='background:{'#EDFAF3' if c.get('status','') == '충족' else ('#FFFBE6' if c.get('status','') == '약함' else '#FFF3EE')};color:{'#1A7A50' if c.get('status','') == '충족' else ('#B8860B' if c.get('status','') == '약함' else '#CC3300')};border:1px solid {'#2EC484' if c.get('status','') == '충족' else ('#FFE066' if c.get('status','') == '약함' else '#FF6432')};padding:3px 11px;border-radius:20px;font-size:0.75rem;font-weight:700;margin-right:7px;margin-bottom:6px;display:inline-block;'>{'✓' if c.get('status','') == '충족' else ('△' if c.get('status','') == '약함' else '✗')} {safe(c.get('item',''))}</span>"
+            for c in must_checks
+        ])
+    else:
+        # fallback: 이전 스키마 호환
+        tags = "".join([
+            f"<span style='background:#EDFAF3;color:#1A7A50;border:1px solid #2EC484;padding:3px 11px;border-radius:20px;font-size:0.75rem;font-weight:700;margin-right:7px;margin-bottom:6px;display:inline-block;'>✓ {safe(c)}</span>"
+            for c in genre.get('checks', [])
+        ])
     missing = genre.get('missing_elements', [])
     missing_html = "".join([
         f"<span style='background:#FFF3EE;color:#CC3300;border:1px solid #FF6432;padding:3px 10px;border-radius:20px;font-size:0.75rem;font-weight:700;margin-right:6px;margin-bottom:6px;display:inline-block;'>✗ {safe(m)}</span>"
@@ -1099,18 +1110,60 @@ def render_analysis(data):
     ])
     compliance = genre.get('compliance_score', 0)
     bar_color = '#2EC484' if compliance >= 7 else ('#FFCB05' if compliance >= 4 else '#FF6432')
+    genre_display = safe(genre.get('genre_key', genre.get('genre_name', '')))
+    
+    # 장르적 재미 진단
+    genre_fun_diagnosis = safe(genre.get('genre_fun_diagnosis', ''))
+    genre_fun_alive = genre.get('genre_fun_alive', None)
+    fun_badge = ""
+    if genre_fun_alive is not None:
+        fun_badge = (f"<span style='background:{'#EDFAF3' if genre_fun_alive else '#FFF3EE'};color:{'#1A7A50' if genre_fun_alive else '#CC3300'};"
+                     f"border:1px solid {'#2EC484' if genre_fun_alive else '#FF6432'};padding:3px 11px;border-radius:20px;font-size:0.75rem;"
+                     f"font-weight:700;margin-left:10px;'>{'✓ 장르적 재미 작동' if genre_fun_alive else '✗ 장르적 재미 약함'}</span>")
+
+    # Hook/Punch 체크
+    hp = genre.get('hook_punch_check', {})
+    hp_html = ""
+    if hp:
+        hook_ok = hp.get('hook_present', False)
+        punch_ok = hp.get('punch_present', False)
+        hp_html = f"""
+        <div style="display:flex;gap:10px;margin:12px 0;">
+            <div style="flex:1;background:{'#EDFAF3' if hook_ok else '#FFF3EE'};padding:10px;border-radius:8px;border-left:3px solid {'#2EC484' if hook_ok else '#FF6432'};">
+                <div style="font-size:0.72rem;font-weight:800;color:{'#1A7A50' if hook_ok else '#CC3300'};margin-bottom:4px;">{'✓' if hook_ok else '✗'} Hook (오프닝)</div>
+                <div style="font-size:0.84rem;color:#191970;line-height:1.6;">{safe(hp.get('hook_note',''))}</div>
+            </div>
+            <div style="flex:1;background:{'#EDFAF3' if punch_ok else '#FFF3EE'};padding:10px;border-radius:8px;border-left:3px solid {'#2EC484' if punch_ok else '#FF6432'};">
+                <div style="font-size:0.72rem;font-weight:800;color:{'#1A7A50' if punch_ok else '#CC3300'};margin-bottom:4px;">{'✓' if punch_ok else '✗'} Punch (결정타)</div>
+                <div style="font-size:0.84rem;color:#191970;line-height:1.6;">{safe(hp.get('punch_note',''))}</div>
+            </div>
+        </div>"""
+
+    # 실패 패턴
+    fail_patterns = genre.get('fail_patterns_found', [])
+    fail_html = ""
+    if fail_patterns:
+        fail_html = "<div style='margin:10px 0;'><strong style='font-size:0.78rem;color:#CC3300;display:block;margin-bottom:6px;'>⚠️ 발견된 실패 패턴</strong>" + "".join([
+            f"<span style='background:#FFF3EE;color:#CC3300;border:1px solid #FF6432;padding:3px 10px;border-radius:20px;font-size:0.75rem;font-weight:700;margin-right:6px;margin-bottom:6px;display:inline-block;'>⚠ {safe(f)}</span>"
+            for f in fail_patterns
+        ]) + "</div>"
+
     st.markdown(f"""
     <div class="report-card">
         <h3>8. 장르 분석 및 적합도 (Genre Compliance)</h3>
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
-            <div style="font-size:1.5rem;font-weight:900;color:#191970;">{safe(genre.get('genre_name',''))}</div>
+            <div style="font-size:1.5rem;font-weight:900;color:#191970;">{genre_display}</div>
+            {fun_badge}
             <div style="flex:1;background:#E6E9EF;border-radius:20px;height:10px;overflow:hidden;">
                 <div style="background:{bar_color};width:{compliance*10}%;height:100%;border-radius:20px;"></div>
             </div>
             <div style="font-size:1.1rem;font-weight:900;color:{bar_color};">{compliance}/10</div>
         </div>
-        <div style="margin-bottom:10px;"><strong style="font-size:0.78rem;color:#191970;display:block;margin-bottom:6px;">✅ 장르 문법 체크</strong>{tags}</div>
+        <div style="margin-bottom:10px;"><strong style="font-size:0.78rem;color:#191970;display:block;margin-bottom:6px;">✅ 장르 필수 요소 체크</strong>{tags}</div>
         {"<div style='margin-bottom:12px;'><strong style='font-size:0.78rem;color:#CC3300;display:block;margin-bottom:6px;'>❌ 누락된 장르 필수 요소</strong>" + missing_html + "</div>" if missing else ""}
+        {fail_html}
+        {hp_html}
+        {"<div style='background:#FFFBE6;border-left:3px solid #FFCB05;padding:14px;border-radius:8px;line-height:1.8;color:#191970;margin-bottom:10px;'><strong style='font-size:0.75rem;color:#B8860B;display:block;margin-bottom:6px;'>🎬 장르적 재미 진단</strong>" + genre_fun_diagnosis + "</div>" if genre_fun_diagnosis else ""}
         <div style="background:#EEF0FA;padding:16px;border-radius:8px;line-height:1.8;color:#191970;">{safe(genre.get('doctoring', ''))}</div>
     </div>""", unsafe_allow_html=True)
 
@@ -1545,10 +1598,37 @@ def _create_docx_fallback(item):
 
     # 7. 장르
     doc.add_heading("7. 장르 분석 및 적합도 (Genre Compliance)", 1)
-    genre = item.get('genre_suitability', {})
-    doc.add_paragraph(f"장르: {genre.get('genre_name','')}")
+    genre = item.get('genre_compliance', {})
+    doc.add_paragraph(f"장르: {genre.get('genre_key', genre.get('genre_name', ''))}")
     doc.add_paragraph(f"준수도: {genre.get('compliance_score',0)} / 10")
-    for c in genre.get('checks', []):           doc.add_paragraph(f"✅ {c}")
+    # 장르적 재미 진단
+    genre_fun_alive = genre.get('genre_fun_alive', None)
+    if genre_fun_alive is not None:
+        doc.add_paragraph(f"장르적 재미: {'✓ 작동' if genre_fun_alive else '✗ 약함'}")
+    if genre.get('genre_fun_diagnosis'):
+        doc.add_paragraph(f"🎬 장르적 재미 진단: {genre.get('genre_fun_diagnosis','')}")
+    # must_have_check (새 스키마)
+    must_checks = genre.get('must_have_check', [])
+    if must_checks:
+        doc.add_heading("필수 요소 체크", 2)
+        for c in must_checks:
+            status_icon = '✅' if c.get('status') == '충족' else ('△' if c.get('status') == '약함' else '❌')
+            doc.add_paragraph(f"{status_icon} {c.get('item','')} [{c.get('status','')}] — {c.get('evidence','')}")
+    else:
+        for c in genre.get('checks', []):
+            doc.add_paragraph(f"✅ {c}")
+    # Hook/Punch 체크
+    hp = genre.get('hook_punch_check', {})
+    if hp:
+        doc.add_heading("Hook / Punch 체크", 2)
+        doc.add_paragraph(f"{'✓' if hp.get('hook_present') else '✗'} Hook: {hp.get('hook_note','')}")
+        doc.add_paragraph(f"{'✓' if hp.get('punch_present') else '✗'} Punch: {hp.get('punch_note','')}")
+    # 실패 패턴
+    fail_patterns = genre.get('fail_patterns_found', [])
+    if fail_patterns:
+        doc.add_heading("발견된 실패 패턴", 2)
+        for f in fail_patterns:
+            doc.add_paragraph(f"⚠️ {f}")
     for m in genre.get('missing_elements', []): doc.add_paragraph(f"❌ {m}")
     doc.add_paragraph(genre.get('doctoring', ''))
 
