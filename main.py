@@ -1543,204 +1543,253 @@ def create_docx(item):
 
 def _create_docx_fallback(item):
     """Node.js 실패 시 python-docx fallback — 전체 섹션 반영"""
-    doc = Document()
 
-    # 표지
-    t = doc.add_heading("시나리오 검토 보고서", 0)
-    t.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    doc.add_paragraph(f"작품명: {item.get('title', '')}").alignment = WD_ALIGN_PARAGRAPH.CENTER
-    doc.add_page_break()
+    def safe_int(v, default=0):
+        try: return int(float(v))
+        except: return default
 
-    # 1. 종합 분석 — 4축 평가표
-    doc.add_heading("1. 종합 분석 (Total Analysis) — Hollywood Standard", 1)
-    mark = item.get('mark', {}).get('final', 0)
-    sc   = item.get('scores', {})
-    verdict = item.get('verdict', {})
-    doc.add_paragraph(f"최종 점수: {mark} / 10.0   판정: {verdict.get('status','')}")
-    doc.add_paragraph(f"판정 근거: {verdict.get('rationale','')}")
-    doc.add_heading("4축 정밀 평가 (Hollywood Standard)", 2)
-    tbl = doc.add_table(rows=6, cols=4)
-    tbl.style = 'Table Grid'
-    headers = ['AXIS', '가중치', '평가 기준', '점수']
-    for i, h in enumerate(headers):
-        tbl.rows[0].cells[i].text = h
-    axis_data = [
-        ('① STRUCTURE / 구성·플롯',  '30%', '인과관계 정밀도 / 3막 구조 완성도',      sc.get('structure', 0)),
-        ('② HERO / 캐릭터',          '30%', 'Goal / Need / Strategy / 감정선',          sc.get('hero', 0)),
-        ('③ CONCEPT / 소재·컨셉',    '20%', '하이컨셉 · 독창성 · 시장성',              sc.get('concept', 0)),
-        ('④ GENRE / 장르 적합성',    '20%', '장르 문법 충실도 / 타깃 소구력',           sc.get('genre', 0)),
-    ]
-    for i, (axis, weight, criteria, val) in enumerate(axis_data, 1):
-        row = tbl.rows[i].cells
-        row[0].text = axis
-        row[1].text = weight
-        row[2].text = criteria
-        row[3].text = f"{'█'*min(int(val),10)}{'░'*(10-min(int(val),10))}  {val}/10"
-    final_row = tbl.rows[5].cells
-    final_row[0].text = 'FINAL'
-    final_row[1].text = ''
-    final_row[2].text = '0.3S + 0.3H + 0.2C + 0.2G'
-    final_row[3].text = f"{mark} / 10.0"
+    def safe_str(v, default=''):
+        if v is None: return default
+        return str(v)
 
-    # 2. 로그라인
-    doc.add_heading("2. 로그라인 분석 (Logline Pack)", 1)
-    log = item.get('logline', {})
-    doc.add_heading("ORIGINAL", 2)
-    doc.add_paragraph(log.get('original', ''))
-    doc.add_heading("✨ WASHED", 2)
-    doc.add_paragraph(log.get('washed', ''))
+    try:
+        doc = Document()
 
-    # 3. 줄거리
-    doc.add_heading("3. 줄거리 (Synopsis)", 1)
-    doc.add_paragraph(item.get('synopsis', ''))
+        # 표지
+        t = doc.add_heading("시나리오 검토 보고서", 0)
+        t.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        doc.add_paragraph(f"작품명: {safe_str(item.get('title', ''))}").alignment = WD_ALIGN_PARAGRAPH.CENTER
+        doc.add_page_break()
 
-    # 4. 장단점 + 핵심처방
-    doc.add_heading("4. 장점 및 보완점 (Pros & Cons)", 1)
-    pc = item.get('pros_cons', {})
-    for p in pc.get('pros', []):  doc.add_paragraph(f"✅ {p}")
-    for c in pc.get('cons', []):  doc.add_paragraph(f"⚠️ {c}")
-    if pc.get('prescription'):
-        doc.add_heading("💊 핵심 처방 (Key Prescription)", 2)
-        doc.add_paragraph(pc.get('prescription', ''))
+        # 1. 종합 분석 — 4축 평가표
+        doc.add_heading("1. 종합 분석 (Total Analysis) — Hollywood Standard", 1)
+        mark = item.get('mark', {}).get('final', 0)
+        sc   = item.get('scores', {})
+        verdict = item.get('verdict', {})
+        doc.add_paragraph(f"최종 점수: {mark} / 10.0   판정: {safe_str(verdict.get('status',''))}")
+        doc.add_paragraph(f"판정 근거: {safe_str(verdict.get('rationale',''))}")
+        doc.add_heading("4축 정밀 평가 (Hollywood Standard)", 2)
+        tbl = doc.add_table(rows=6, cols=4)
+        tbl.style = 'Table Grid'
+        headers = ['AXIS', '가중치', '평가 기준', '점수']
+        for i, h in enumerate(headers):
+            tbl.rows[0].cells[i].text = h
+        axis_data = [
+            ('① STRUCTURE / 구성·플롯',  '30%', '인과관계 정밀도 / 3막 구조 완성도',      safe_int(sc.get('structure', 0))),
+            ('② HERO / 캐릭터',          '30%', 'Goal / Need / Strategy / 감정선',          safe_int(sc.get('hero', 0))),
+            ('③ CONCEPT / 소재·컨셉',    '20%', '하이컨셉 · 독창성 · 시장성',              safe_int(sc.get('concept', 0))),
+            ('④ GENRE / 장르 적합성',    '20%', '장르 문법 충실도 / 타깃 소구력',           safe_int(sc.get('genre', 0))),
+        ]
+        for i, (axis, weight, criteria, val) in enumerate(axis_data, 1):
+            row = tbl.rows[i].cells
+            row[0].text = axis
+            row[1].text = weight
+            row[2].text = criteria
+            clamped = min(max(val, 0), 10)
+            row[3].text = f"{'█'*clamped}{'░'*(10-clamped)}  {val}/10"
+        final_row = tbl.rows[5].cells
+        final_row[0].text = 'FINAL'
+        final_row[1].text = ''
+        final_row[2].text = '0.3S + 0.3H + 0.2C + 0.2G'
+        final_row[3].text = f"{mark} / 10.0"
 
-    # 5. 서사 동력
-    doc.add_heading("5. 서사 동력 (Narrative Drive)", 1)
-    drive = item.get('drive', {})
-    doc.add_paragraph(f"① 목적(욕망): {drive.get('goal','')}")
-    doc.add_paragraph(f"② 발생요인: {drive.get('lack','')}")
-    doc.add_paragraph(f"③ 해결전략: {drive.get('strategy','')}")
-    ev = drive.get('evaluation', {})
-    doc.add_paragraph(f"목적 명확성: {ev.get('clarity','')}")
-    doc.add_paragraph(f"발생요인 확실성: {ev.get('urgency','')}")
-    doc.add_paragraph(f"해결전략 창의성: {ev.get('consistency','')}")
-    doc.add_paragraph(ev.get('overall_diagnosis', ''))
+        # 2. 로그라인
+        doc.add_heading("2. 로그라인 분석 (Logline Pack)", 1)
+        log = item.get('logline', {})
+        if isinstance(log, dict):
+            doc.add_heading("ORIGINAL", 2)
+            doc.add_paragraph(safe_str(log.get('original', '')))
+            doc.add_heading("WASHED", 2)
+            doc.add_paragraph(safe_str(log.get('washed', '')))
+        else:
+            doc.add_paragraph(safe_str(log))
 
-    # 6. 15-Beat Sheet
-    BEAT_KO = {
-        "Opening Image":"오프닝 이미지","Theme Stated":"주제 제시","Set-up":"설정",
-        "Catalyst":"촉매","Debate":"갈등","Break Into Two":"2막 진입",
-        "B Story":"B 스토리","Fun and Games":"재미와 게임","Midpoint":"중간점",
-        "Bad Guys Close In":"위기 고조","All Is Lost":"모든 것을 잃다",
-        "Dark Night of Soul":"영혼의 어둔 밤","Dark Night of the Soul":"영혼의 어둔 밤",
-        "Break Into Three":"3막 진입","Finale":"피날레","Final Image":"최종 이미지",
-    }
-    circles_fb = ['①','②','③','④','⑤','⑥','⑦','⑧','⑨','⑩','⑪','⑫','⑬','⑭','⑮']
-    doc.add_heading("6. 구성 및 플롯 (15-Beat Sheet)", 1)
-    beats = item.get('beats', {})
-    btbl = doc.add_table(rows=1, cols=2)
-    btbl.style = 'Table Grid'
-    btbl.rows[0].cells[0].text = 'BEAT'
-    btbl.rows[0].cells[1].text = 'DESCRIPTION'
-    for idx, (k, v) in enumerate(sorted(beats.items()), 0):
-        name = re.sub(r'^[\d\.\-\_\s]+', '', str(k)).strip()
-        ko   = BEAT_KO.get(name, name)
-        row  = btbl.add_row()
-        row.cells[0].text = f"{circles_fb[idx] if idx < 15 else ''} {ko} ({name})"
-        row.cells[1].text = str(v)
+        # 3. 줄거리
+        doc.add_heading("3. 줄거리 (Synopsis)", 1)
+        doc.add_paragraph(safe_str(item.get('synopsis', '')))
 
-    # 7. 장르
-    doc.add_heading("7. 장르 분석 및 적합도 (Genre Compliance)", 1)
-    genre = item.get('genre_compliance', {})
-    doc.add_paragraph(f"장르: {genre.get('genre_key', genre.get('genre_name', ''))}")
-    doc.add_paragraph(f"준수도: {genre.get('compliance_score',0)} / 10")
-    # 장르적 재미 진단
-    genre_fun_alive = genre.get('genre_fun_alive', None)
-    if genre_fun_alive is not None:
-        doc.add_paragraph(f"장르적 재미: {'✓ 작동' if genre_fun_alive else '✗ 약함'}")
-    if genre.get('genre_fun_diagnosis'):
-        doc.add_paragraph(f"🎬 장르적 재미 진단: {genre.get('genre_fun_diagnosis','')}")
-    # must_have_check (새 스키마)
-    must_checks = genre.get('must_have_check', [])
-    if must_checks:
-        doc.add_heading("필수 요소 체크", 2)
-        for c in must_checks:
-            status_icon = '✅' if c.get('status') == '충족' else ('△' if c.get('status') == '약함' else '❌')
-            doc.add_paragraph(f"{status_icon} {c.get('item','')} [{c.get('status','')}] — {c.get('evidence','')}")
-    else:
-        for c in genre.get('checks', []):
-            doc.add_paragraph(f"✅ {c}")
-    # Hook/Punch 체크
-    hp = genre.get('hook_punch_check', {})
-    if hp:
-        doc.add_heading("Hook / Punch 체크", 2)
-        doc.add_paragraph(f"{'✓' if hp.get('hook_present') else '✗'} Hook: {hp.get('hook_note','')}")
-        doc.add_paragraph(f"{'✓' if hp.get('punch_present') else '✗'} Punch: {hp.get('punch_note','')}")
-    # 실패 패턴
-    fail_patterns = genre.get('fail_patterns_found', [])
-    if fail_patterns:
-        doc.add_heading("발견된 실패 패턴", 2)
-        for f in fail_patterns:
-            doc.add_paragraph(f"⚠️ {f}")
-    for m in genre.get('missing_elements', []): doc.add_paragraph(f"❌ {m}")
-    doc.add_paragraph(genre.get('doctoring', ''))
+        # 4. 장단점 + 핵심처방
+        doc.add_heading("4. 장점 및 보완점 (Pros & Cons)", 1)
+        pc = item.get('pros_cons', {})
+        if isinstance(pc, dict):
+            for p in pc.get('pros', []):  doc.add_paragraph(f"✅ {safe_str(p)}")
+            for c in pc.get('cons', []):  doc.add_paragraph(f"⚠️ {safe_str(c)}")
+            if pc.get('prescription'):
+                doc.add_heading("핵심 처방 (Key Prescription)", 2)
+                doc.add_paragraph(safe_str(pc.get('prescription', '')))
 
-    # 8. 시퀀스 워싱
-    doc.add_page_break()
-    doc.add_heading("8. 시퀀스 워싱 (Washing Table)", 1)
-    for row in item.get('washing_table', []):
-        doc.add_paragraph(f"[{row.get('seq','')}]  {row.get('label','')}")
-        wtbl = doc.add_table(rows=1, cols=2)
-        wtbl.style = 'Table Grid'
-        wtbl.rows[0].cells[0].text = f"⚠️ 진단\n{row.get('diagnosis','')}"
-        wtbl.rows[0].cells[1].text = f"✅ 처방\n{row.get('prescription','')}"
+        # 5. 서사 동력
+        doc.add_heading("5. 서사 동력 (Narrative Drive)", 1)
+        drive = item.get('drive', {})
+        if isinstance(drive, dict):
+            doc.add_paragraph(f"① 목적(욕망): {safe_str(drive.get('goal',''))}")
+            doc.add_paragraph(f"② 발생요인: {safe_str(drive.get('lack',''))}")
+            doc.add_paragraph(f"③ 해결전략: {safe_str(drive.get('strategy',''))}")
+            ev = drive.get('evaluation', {})
+            if isinstance(ev, dict):
+                doc.add_paragraph(f"목적 명확성: {safe_str(ev.get('clarity',''))}")
+                doc.add_paragraph(f"발생요인 확실성: {safe_str(ev.get('urgency',''))}")
+                doc.add_paragraph(f"해결전략 창의성: {safe_str(ev.get('consistency',''))}")
+                doc.add_paragraph(safe_str(ev.get('overall_diagnosis', '')))
 
-    # 9. 대사 워싱
-    doc.add_heading("9. 대사 워싱 (Dialogue Washing)", 1)
-    da = item.get('dialogue_analysis', {})
-    if da:
-        doc.add_paragraph(f"종합 대사 수준: {da.get('overall_score',0)} / 10")
-        ax = da.get('axis_scores', {})
-        if ax:
-            doc.add_heading("3축 점수", 2)
-            atbl = doc.add_table(rows=4, cols=3)
-            atbl.style = 'Table Grid'
-            atbl.rows[0].cells[0].text = '평가 축'
-            atbl.rows[0].cells[1].text = '기준'
-            atbl.rows[0].cells[2].text = '점수'
-            axes = [
-                ('① 캐릭터 적합성', '고유 어휘·말투·감정 반영',   ax.get('character_voice',0)),
-                ('② 서브텍스트',    '표면↔이면 충돌, 설명형 금지', ax.get('subtext',0)),
-                ('③ 행동/감정/관계','장면 추진력, 정보전달 금지',   ax.get('action_driven',0)),
-            ]
-            for i, (lbl, crit, val) in enumerate(axes, 1):
-                atbl.rows[i].cells[0].text = lbl
-                atbl.rows[i].cells[1].text = crit
-                atbl.rows[i].cells[2].text = f"{'█'*min(int(val),10)}{'░'*(10-min(int(val),10))}  {val}/10"
-        doc.add_paragraph(da.get('overall_comment', ''))
-        for s in da.get('strengths', []):
-            doc.add_paragraph(f"💪 {s}")
-        doc.add_heading("🔍 대사 4축 진단 Before / After", 2)
-        for issue in da.get('issues', []):
-            doc.add_paragraph(f"[{issue.get('type','')}]  {issue.get('axis','')}  {issue.get('description','')}")
-            itbl = doc.add_table(rows=1, cols=2)
-            itbl.style = 'Table Grid'
-            itbl.rows[0].cells[0].text = f"❌ BEFORE\n{issue.get('example_bad','')}"
-            itbl.rows[0].cells[1].text = f"✅ ④ 개선 제안\n{issue.get('example_good','')}"
-            if issue.get('rewrite_note'):
-                doc.add_paragraph(f"✏️ Moon 지시: {issue.get('rewrite_note','')}")
-    
-    # 10. 각색 제안
-    doc.add_heading("10. 각색 제안 (Action Plan)", 1)
-    for i, s in enumerate(item.get('suggestions', []), 1):
-        clean_s = re.sub(r'^[\d\.\s]+', '', str(s)).strip()
-        doc.add_paragraph(f"STEP {i:02d}  {clean_s}")
+        # 6. 15-Beat Sheet
+        BEAT_KO = {
+            "Opening Image":"오프닝 이미지","Theme Stated":"주제 제시","Set-up":"설정",
+            "Catalyst":"촉매","Debate":"갈등","Break Into Two":"2막 진입",
+            "B Story":"B 스토리","Fun and Games":"재미와 게임","Midpoint":"중간점",
+            "Bad Guys Close In":"위기 고조","All Is Lost":"모든 것을 잃다",
+            "Dark Night of Soul":"영혼의 어둔 밤","Dark Night of the Soul":"영혼의 어둔 밤",
+            "Break Into Three":"3막 진입","Finale":"피날레","Climax":"클라이맥스",
+            "Final Image":"최종 이미지",
+        }
+        circles_fb = ['①','②','③','④','⑤','⑥','⑦','⑧','⑨','⑩','⑪','⑫','⑬','⑭','⑮']
+        doc.add_heading("6. 구성 및 플롯 (15-Beat Sheet)", 1)
+        beats = item.get('beats', {})
+        if isinstance(beats, dict) and beats:
+            btbl = doc.add_table(rows=1, cols=2)
+            btbl.style = 'Table Grid'
+            btbl.rows[0].cells[0].text = 'BEAT'
+            btbl.rows[0].cells[1].text = 'DESCRIPTION'
+            for idx, (k, v) in enumerate(sorted(beats.items()), 0):
+                name = re.sub(r'^[\d\.\-\_\s]+', '', str(k)).strip()
+                ko   = BEAT_KO.get(name, name)
+                row  = btbl.add_row()
+                row.cells[0].text = f"{circles_fb[idx] if idx < 15 else ''} {ko} ({name})"
+                row.cells[1].text = safe_str(v)
 
-    # 11. 각색 원고
-    doc.add_page_break()
-    doc.add_heading("11. 각색 원고 (Rewrite Scenes)", 1)
-    rw = item.get('rewriting', {})
-    if rw.get('target_reason'):
-        doc.add_paragraph(f"✏️ 각색 전략: {rw.get('target_reason','')}")
-    for sc in rw.get('scenes', []):
-        is_r = sc.get('type') == '수정씬'
-        doc.add_heading(f"{sc.get('scene_no','')}  [{'✏️ 수정씬' if is_r else '✨ 추가씬'}]", 2)
-        if sc.get('original'):
-            doc.add_paragraph(f"📄 기존 씬 (BEFORE)\n{sc.get('original','')}")
-        doc.add_paragraph(f"{'✏️ 수정씬' if is_r else '✨ 추가씬'} (AFTER)\n{sc.get('content','').replace(chr(92)+'n', chr(10))}")
+        # 7. 장르
+        doc.add_heading("7. 장르 분석 및 적합도 (Genre Compliance)", 1)
+        genre = item.get('genre_compliance', item.get('genre_suitability', {}))
+        if isinstance(genre, dict):
+            doc.add_paragraph(f"장르: {safe_str(genre.get('genre_key', genre.get('genre_name', '')))}")
+            doc.add_paragraph(f"준수도: {genre.get('compliance_score',0)} / 10")
+            # 장르적 재미 진단
+            genre_fun_alive = genre.get('genre_fun_alive', None)
+            if genre_fun_alive is not None:
+                doc.add_paragraph(f"장르적 재미: {'✓ 작동' if genre_fun_alive else '✗ 약함'}")
+            if genre.get('genre_fun_diagnosis'):
+                doc.add_paragraph(f"장르적 재미 진단: {safe_str(genre.get('genre_fun_diagnosis',''))}")
+            # must_have_check
+            must_checks = genre.get('must_have_check', [])
+            if isinstance(must_checks, list) and must_checks:
+                doc.add_heading("필수 요소 체크", 2)
+                for c in must_checks:
+                    if isinstance(c, dict):
+                        status_icon = '✅' if c.get('status') == '충족' else ('△' if c.get('status') == '약함' else '❌')
+                        doc.add_paragraph(f"{status_icon} {safe_str(c.get('item',''))} [{safe_str(c.get('status',''))}] — {safe_str(c.get('evidence',''))}")
+            else:
+                for c in genre.get('checks', []):
+                    doc.add_paragraph(f"✅ {safe_str(c)}")
+            # Hook/Punch 체크
+            hp = genre.get('hook_punch_check', {})
+            if isinstance(hp, dict) and hp:
+                doc.add_heading("Hook / Punch 체크", 2)
+                doc.add_paragraph(f"{'✓' if hp.get('hook_present') else '✗'} Hook: {safe_str(hp.get('hook_note',''))}")
+                doc.add_paragraph(f"{'✓' if hp.get('punch_present') else '✗'} Punch: {safe_str(hp.get('punch_note',''))}")
+            # 실패 패턴
+            fail_patterns = genre.get('fail_patterns_found', [])
+            if isinstance(fail_patterns, list) and fail_patterns:
+                doc.add_heading("발견된 실패 패턴", 2)
+                for f in fail_patterns:
+                    doc.add_paragraph(f"⚠️ {safe_str(f)}")
+            for m in genre.get('missing_elements', []):
+                doc.add_paragraph(f"❌ {safe_str(m)}")
+            if genre.get('doctoring'):
+                doc.add_paragraph(safe_str(genre.get('doctoring', '')))
 
-    buf = io.BytesIO()
-    doc.save(buf)
-    return buf.getvalue()
+        # 8. 시퀀스 워싱
+        doc.add_page_break()
+        doc.add_heading("8. 시퀀스 워싱 (Washing Table)", 1)
+        for row in item.get('washing_table', []):
+            if not isinstance(row, dict): continue
+            doc.add_paragraph(f"[{safe_str(row.get('seq',''))}]  {safe_str(row.get('label',''))}")
+            wtbl = doc.add_table(rows=1, cols=2)
+            wtbl.style = 'Table Grid'
+            wtbl.rows[0].cells[0].text = f"⚠️ 진단\n{safe_str(row.get('diagnosis',''))}"
+            wtbl.rows[0].cells[1].text = f"✅ 처방\n{safe_str(row.get('prescription',''))}"
+
+        # 9. 대사 워싱
+        doc.add_heading("9. 대사 워싱 (Dialogue Washing)", 1)
+        da = item.get('dialogue_analysis', {})
+        if isinstance(da, dict) and da:
+            doc.add_paragraph(f"종합 대사 수준: {da.get('overall_score',0)} / 10")
+            ax = da.get('axis_scores', {})
+            if isinstance(ax, dict) and ax:
+                doc.add_heading("3축 점수", 2)
+                atbl = doc.add_table(rows=4, cols=3)
+                atbl.style = 'Table Grid'
+                atbl.rows[0].cells[0].text = '평가 축'
+                atbl.rows[0].cells[1].text = '기준'
+                atbl.rows[0].cells[2].text = '점수'
+                axes = [
+                    ('① 캐릭터 적합성', '고유 어휘·말투·감정 반영',   safe_int(ax.get('character_voice',0))),
+                    ('② 서브텍스트',    '표면↔이면 충돌, 설명형 금지', safe_int(ax.get('subtext',0))),
+                    ('③ 행동/감정/관계','장면 추진력, 정보전달 금지',   safe_int(ax.get('action_driven',0))),
+                ]
+                for i, (lbl, crit, val) in enumerate(axes, 1):
+                    atbl.rows[i].cells[0].text = lbl
+                    atbl.rows[i].cells[1].text = crit
+                    clamped = min(max(val, 0), 10)
+                    atbl.rows[i].cells[2].text = f"{'█'*clamped}{'░'*(10-clamped)}  {val}/10"
+            doc.add_paragraph(safe_str(da.get('overall_comment', '')))
+            for s in da.get('strengths', []):
+                doc.add_paragraph(f"💪 {safe_str(s)}")
+            issues = da.get('issues', [])
+            if isinstance(issues, list) and issues:
+                doc.add_heading("대사 4축 진단 Before / After", 2)
+                for issue in issues:
+                    if not isinstance(issue, dict): continue
+                    doc.add_paragraph(f"[{safe_str(issue.get('type',''))}]  {safe_str(issue.get('axis',''))}  {safe_str(issue.get('description',''))}")
+                    itbl = doc.add_table(rows=1, cols=2)
+                    itbl.style = 'Table Grid'
+                    itbl.rows[0].cells[0].text = f"❌ BEFORE\n{safe_str(issue.get('example_bad',''))}"
+                    itbl.rows[0].cells[1].text = f"✅ ④ 개선 제안\n{safe_str(issue.get('example_good',''))}"
+                    if issue.get('rewrite_note'):
+                        doc.add_paragraph(f"✏️ Moon 지시: {safe_str(issue.get('rewrite_note',''))}")
+        
+        # 10. 각색 제안
+        doc.add_heading("10. 각색 제안 (Action Plan)", 1)
+        for i, s in enumerate(item.get('suggestions', []), 1):
+            clean_s = re.sub(r'^[\d\.\s]+', '', safe_str(s)).strip()
+            doc.add_paragraph(f"STEP {i:02d}  {clean_s}")
+
+        # 11. 각색 원고
+        doc.add_page_break()
+        doc.add_heading("11. 각색 원고 (Rewrite Scenes)", 1)
+        rw = item.get('rewriting', {})
+        if isinstance(rw, dict):
+            if rw.get('target_reason'):
+                doc.add_paragraph(f"✏️ 각색 전략: {safe_str(rw.get('target_reason',''))}")
+            for sc in rw.get('scenes', []):
+                if not isinstance(sc, dict): continue
+                is_r = sc.get('type') == '수정씬'
+                doc.add_heading(f"{safe_str(sc.get('scene_no',''))}  [{'✏️ 수정씬' if is_r else '✨ 추가씬'}]", 2)
+                if sc.get('original'):
+                    doc.add_paragraph(f"📄 기존 씬 (BEFORE)\n{safe_str(sc.get('original',''))}")
+                content = safe_str(sc.get('content', ''))
+                content = content.replace('\\n', '\n')
+                doc.add_paragraph(f"{'✏️ 수정씬' if is_r else '✨ 추가씬'} (AFTER)\n{content}")
+
+        buf = io.BytesIO()
+        doc.save(buf)
+        buf.seek(0)
+        return buf.getvalue()
+
+    except Exception as e:
+        st.error(f"DOCX 생성 중 오류 발생: {type(e).__name__} — {e}")
+        # 최소한의 오류 보고서라도 생성
+        try:
+            doc_err = Document()
+            doc_err.add_heading("DOCX 생성 오류", 0)
+            doc_err.add_paragraph(f"오류: {type(e).__name__} — {e}")
+            doc_err.add_paragraph(f"작품명: {safe_str(item.get('title', ''))}")
+            doc_err.add_paragraph("전체 보고서 생성에 실패했습니다. Streamlit 화면의 분석 결과를 참고해주세요.")
+            buf_err = io.BytesIO()
+            doc_err.save(buf_err)
+            buf_err.seek(0)
+            return buf_err.getvalue()
+        except:
+            return None
 
 
 # =================================================================
