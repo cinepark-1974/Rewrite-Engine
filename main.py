@@ -1490,64 +1490,8 @@ def render_rewriting(data):
 # [8] DOCX 생성
 # =================================================================
 def create_docx(item):
-    import subprocess, tempfile, os
-    # report_data.json 생성
-    report_data = {
-        "analysis": item,
-        "washing": {
-            "washing_table":    item.get("washing_table", []),
-            "dialogue_analysis": item.get("dialogue_analysis", {}),
-            "suggestions":       item.get("suggestions", [])
-        },
-        "rewriting": {"rewriting": item.get("rewriting", {})}
-    }
-    import shutil
-    tmp_dir = tempfile.mkdtemp()
-    json_path   = os.path.join(tmp_dir, "report_data.json")
-    out_path    = os.path.join(tmp_dir, "report_output.docx")
-
-    # gen_docx.js를 tmp_dir에 복사
-    script_src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gen_docx.js")
-    if not os.path.exists(script_src):
-        for candidate in ["/app/gen_docx.js", "./gen_docx.js", "/home/claude/gen_docx.js"]:
-            if os.path.exists(candidate):
-                script_src = candidate
-                break
-    script_path = os.path.join(tmp_dir, "gen_docx.js")
-    try:
-        shutil.copy2(script_src, script_path)
-    except Exception:
-        return _create_docx_fallback(item)
-
-    # docx npm 패키지 설치 (Streamlit Cloud에 node_modules 없을 경우)
-    nm_path = os.path.join(tmp_dir, "node_modules", "docx")
-    if not os.path.exists(nm_path):
-        npm_result = subprocess.run(
-            ["npm", "install", "docx"],
-            capture_output=True, text=True, timeout=120,
-            cwd=tmp_dir
-        )
-        if npm_result.returncode != 0:
-            st.warning(f"npm install 실패: {npm_result.stderr[:200]}")
-            return _create_docx_fallback(item)
-
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(report_data, f, ensure_ascii=False)
-
-    result = subprocess.run(
-        ["node", script_path, json_path, out_path],
-        capture_output=True, text=True, timeout=60,
-        cwd=tmp_dir
-    )
-    if result.returncode != 0 or not os.path.exists(out_path):
-        st.warning(f"DOCX 생성 오류 (Node): {result.stderr[:300]}")
-        return _create_docx_fallback(item)
-
-    with open(out_path, "rb") as f:
-        data = f.read()
-
-    shutil.rmtree(tmp_dir, ignore_errors=True)
-    return data
+    """DOCX 보고서 생성 — python-docx 전용"""
+    return _create_docx_fallback(item)
 
 
 def _create_docx_fallback(item):
