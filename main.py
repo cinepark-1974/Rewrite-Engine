@@ -718,15 +718,70 @@ JSON만 출력. 마크다운 금지.
 # [6] PICTURES — 리라이팅 비서 (prompt.py 빌더 사용)
 # =================================================================
 def run_pictures(text, washing, client):
+    """MOON 리라이팅 — 2회 분할 호출 (수정씬 6개 → 추가씬 4개)"""
     from prompt import SYSTEM_PROMPT
     analysis = st.session_state.get('analysis', {})
     prompt = build_rewrite_prompt(text, analysis, washing)
     user_prompt = prompt.replace(SYSTEM_PROMPT, '').strip()
-    raw = call_claude(client, user_prompt, max_tokens=24000, system=SYSTEM_PROMPT)
-    result = parse_json(raw)
-    if result and not result.get('rewriting', {}).get('scenes'):
-        st.warning(f"⚠️ scenes 파싱 실패. raw 앞 500자: {raw[:500] if raw else 'None'}")
-    return result
+
+    # ── PASS 1: 수정씬 6개 ──
+    pass1_instruction = (
+        "\n\n[이번 호출의 임무]\n"
+        "이번에는 수정씬 6개만 작성하라. 추가씬은 다음 호출에서 작성한다.\n"
+        "JSON 스키마는 동일하되, scenes 배열에 수정씬 6개만 포함하라.\n"
+        "target_reason은 전체 10개 씬 기준으로 작성하라."
+    )
+    st.info("✍️ MOON Pass 1/2 — 수정씬 6개 작성 중...")
+    raw1 = call_claude(client, user_prompt + pass1_instruction, max_tokens=16000, system=SYSTEM_PROMPT)
+    result1 = parse_json(raw1) if raw1 else None
+    if not result1 or not result1.get('rewriting', {}).get('scenes'):
+        st.warning("⚠️ Pass 1 (수정씬) 파싱 실패. 단일 호출로 재시도합니다...")
+        # fallback: 단일 호출
+        raw_full = call_claude(client, user_prompt, max_tokens=16000, system=SYSTEM_PROMPT)
+        result_full = parse_json(raw_full) if raw_full else None
+        if result_full and not result_full.get('rewriting', {}).get('scenes'):
+            st.warning(f"⚠️ scenes 파싱 실패. raw 앞 500자: {raw_full[:500] if raw_full else 'None'}")
+        return result_full
+
+    scenes_pass1 = result1.get('rewriting', {}).get('scenes', [])
+    target_reason = result1.get('rewriting', {}).get('target_reason', '')
+
+    # ── PASS 2: 추가씬 4개 ──
+    # Pass 1 결과를 컨텍스트로 전달
+    pass1_summary = "\n".join([
+        f"  - {sc.get('scene_no','')}: {sc.get('linked_diagnosis','')}"
+        for sc in scenes_pass1
+    ])
+    pass2_instruction = (
+        f"\n\n[이번 호출의 임무]\n"
+        f"이전 호출에서 수정씬 6개를 완성했다. 이번에는 추가씬 4개만 작성하라.\n"
+        f"\n[이미 완성된 수정씬 목록]\n{pass1_summary}\n"
+        f"\n추가씬은 위 수정씬에서 다루지 못한 문제를 보완하거나, 장르적 재미를 복구하는 씬이어야 한다.\n"
+        f"JSON 스키마는 동일하되, scenes 배열에 추가씬 4개만 포함하라.\n"
+        f"target_reason은 생략하라 (빈 문자열)."
+    )
+    st.info("✍️ MOON Pass 2/2 — 추가씬 4개 작성 중...")
+    raw2 = call_claude(client, user_prompt + pass2_instruction, max_tokens=16000, system=SYSTEM_PROMPT)
+    result2 = parse_json(raw2) if raw2 else None
+
+    scenes_pass2 = []
+    if result2 and result2.get('rewriting', {}).get('scenes'):
+        scenes_pass2 = result2.get('rewriting', {}).get('scenes', [])
+
+    # ── 병합 ──
+    all_scenes = scenes_pass1 + scenes_pass2
+    merged = {
+        "rewriting": {
+            "target_reason": target_reason,
+            "scenes": all_scenes
+        }
+    }
+
+    revised_count = sum(1 for s in all_scenes if s.get('type') == '수정씬')
+    added_count = sum(1 for s in all_scenes if s.get('type') == '추가씬')
+    st.success(f"✅ MOON 완료 — 수정씬 {revised_count}개 + 추가씬 {added_count}개 = 총 {len(all_scenes)}개 씬")
+
+    return merged
 
 def _run_pictures_OLD_UNUSED(text, washing, client):
     suggestions = washing.get('suggestions', [])
