@@ -486,7 +486,7 @@ def get_client():
     return anthropic.Anthropic(api_key=api_key)
 
 def call_claude(client, prompt, max_tokens=6000, system=None, retries=2):
-    """Claude API 호출. max_tokens 잘림 시 토큰을 50% 증량하여 자동 재시도."""
+    """Claude API 호출 (스트리밍). max_tokens 잘림 시 50% 증량 자동 재시도."""
     current_tokens = max_tokens
     for attempt in range(1 + retries):
         try:
@@ -497,9 +497,18 @@ def call_claude(client, prompt, max_tokens=6000, system=None, retries=2):
             )
             if system:
                 kwargs["system"] = system
-            message = client.messages.create(**kwargs)
 
-            if message.stop_reason == "max_tokens":
+            # 스트리밍으로 응답 수집 (10분+ 타임아웃 방지)
+            collected_text = ""
+            stop_reason = None
+            with client.messages.stream(**kwargs) as stream:
+                for text in stream.text_stream:
+                    collected_text += text
+                # 스트림 종료 후 최종 메시지에서 stop_reason 확인
+                final_message = stream.get_final_message()
+                stop_reason = final_message.stop_reason
+
+            if stop_reason == "max_tokens":
                 if attempt < retries:
                     next_tokens = min(int(current_tokens * 1.5), 32000)
                     st.info(f"🔄 응답이 {current_tokens} 토큰에서 잘렸습니다. {next_tokens} 토큰으로 재시도합니다... ({attempt+2}/{1+retries}회차)")
@@ -507,7 +516,7 @@ def call_claude(client, prompt, max_tokens=6000, system=None, retries=2):
                     continue
                 else:
                     st.warning(f"⚠️ {retries}회 재시도 후에도 응답이 {current_tokens} 토큰에서 잘렸습니다. 결과가 불완전할 수 있습니다.")
-            return message.content[0].text
+            return collected_text
         except Exception as e:
             st.error(f"API 오류 상세: {type(e).__name__} — {e}")
             return None
@@ -713,7 +722,7 @@ def run_pictures(text, washing, client):
     analysis = st.session_state.get('analysis', {})
     prompt = build_rewrite_prompt(text, analysis, washing)
     user_prompt = prompt.replace(SYSTEM_PROMPT, '').strip()
-    raw = call_claude(client, user_prompt, max_tokens=16000, system=SYSTEM_PROMPT)
+    raw = call_claude(client, user_prompt, max_tokens=24000, system=SYSTEM_PROMPT)
     result = parse_json(raw)
     if result and not result.get('rewriting', {}).get('scenes'):
         st.warning(f"⚠️ scenes 파싱 실패. raw 앞 500자: {raw[:500] if raw else 'None'}")
