@@ -123,7 +123,7 @@ const pc        = an.pros_cons || {};
 const drive     = an.drive || {};
 const ev        = drive.evaluation || {};
 const beats     = an.beats || {};
-const genre     = an.genre_suitability || {};
+const genre     = an.genre_compliance || an.genre_suitability || {};
 const washTable = wa.washing_table || [];
 const da        = wa.dialogue_analysis || {};
 const suggestions = wa.suggestions || [];
@@ -361,12 +361,78 @@ children.push(divider());
 
 // ━━ 8. 장르 ━━
 children.push(heading('8. 장르 분석 및 적합도  (Genre Compliance)'));
-children.push(kv('장르', genre.genre_name));
+children.push(kv('장르', genre.genre_key || genre.genre_name || '-'));
 children.push(kv('준수도', `${genre.compliance_score||0} / 10   ${scoreBar(genre.compliance_score||0)}`));
+// 장르적 재미 진단
+if (genre.genre_fun_alive !== undefined) {
+  children.push(kv('장르적 재미', genre.genre_fun_alive ? '✓ 작동' : '✗ 약함'));
+}
+if (genre.genre_fun_diagnosis) {
+  children.push(gap(60));
+  children.push(colorBox({ label:'🎬 장르적 재미 진단', text:genre.genre_fun_diagnosis, bg:C.bgYellow, borderColor:C.gold }));
+}
 children.push(gap(60));
-if ((genre.checks||[]).length) {
+// must_have_check (새 스키마)
+const mustChecks = genre.must_have_check || [];
+if (mustChecks.length) {
+  children.push(heading('✅ 장르 필수 요소 체크', 3));
+  mustChecks.forEach(c => {
+    const icon = c.status === '충족' ? '✅' : (c.status === '약함' ? '△' : '❌');
+    const cl   = c.status === '충족' ? C.greenDk : (c.status === '약함' ? C.goldDark : C.redDk);
+    children.push(new Paragraph({
+      spacing:{ line:340, before:30, after:30 },
+      children:[
+        new TextRun({ text:`${icon} ${c.item||''} `, font:'Arial', size:19, bold:true, color:cl }),
+        new TextRun({ text:`[${c.status||''}] `, font:'Arial', size:18, bold:true, color:cl }),
+        new TextRun({ text:`— ${c.evidence||''}`, font:'Arial', size:18, color:C.text }),
+      ]
+    }));
+  });
+} else if ((genre.checks||[]).length) {
+  // fallback: 이전 스키마
   children.push(heading('✅ 장르 문법 체크', 3));
   (genre.checks||[]).forEach(c => children.push(para('• '+c, {color:C.greenDk})));
+}
+// Hook/Punch 체크
+const hp = genre.hook_punch_check || {};
+if (hp.hook_note || hp.punch_note) {
+  children.push(gap(60));
+  children.push(heading('Hook / Punch 체크', 3));
+  const hpHalf = Math.floor(W/2);
+  children.push(new Table({
+    width:{ size:W, type:WidthType.DXA }, columnWidths:[hpHalf, W-hpHalf],
+    rows:[new TableRow({ children:[
+      new TableCell({
+        borders:{ top:bd(hp.hook_present?C.green:C.red,4), bottom:bd(hp.hook_present?C.green:C.red,4),
+                  right:bd(hp.hook_present?C.green:C.red,4),
+                  left:{ style:BorderStyle.SINGLE, size:12, color:hp.hook_present?C.green:C.red } },
+        shading:{ fill:hp.hook_present?C.bgGreen:C.bgRed, type:ShadingType.CLEAR },
+        margins:{top:100,bottom:100,left:160,right:160}, width:{size:hpHalf,type:WidthType.DXA},
+        children:[
+          new Paragraph({spacing:{after:40},children:[new TextRun({text:`${hp.hook_present?'✓':'✗'} Hook (오프닝)`,font:'Arial',size:17,bold:true,color:hp.hook_present?C.greenDk:C.redDk})]}),
+          new Paragraph({spacing:{line:310},children:[new TextRun({text:String(hp.hook_note||'-'),font:'Arial',size:18,color:C.text})]}),
+        ]
+      }),
+      new TableCell({
+        borders:{ top:bd(hp.punch_present?C.green:C.red,4), bottom:bd(hp.punch_present?C.green:C.red,4),
+                  right:bd(hp.punch_present?C.green:C.red,4),
+                  left:{ style:BorderStyle.SINGLE, size:12, color:hp.punch_present?C.green:C.red } },
+        shading:{ fill:hp.punch_present?C.bgGreen:C.bgRed, type:ShadingType.CLEAR },
+        margins:{top:100,bottom:100,left:160,right:160}, width:{size:W-hpHalf,type:WidthType.DXA},
+        children:[
+          new Paragraph({spacing:{after:40},children:[new TextRun({text:`${hp.punch_present?'✓':'✗'} Punch (결정타)`,font:'Arial',size:17,bold:true,color:hp.punch_present?C.greenDk:C.redDk})]}),
+          new Paragraph({spacing:{line:310},children:[new TextRun({text:String(hp.punch_note||'-'),font:'Arial',size:18,color:C.text})]}),
+        ]
+      }),
+    ]})]
+  }));
+}
+// 실패 패턴
+const failPatterns = genre.fail_patterns_found || [];
+if (failPatterns.length) {
+  children.push(gap(60));
+  children.push(heading('⚠️ 발견된 실패 패턴', 3));
+  failPatterns.forEach(f => children.push(para('⚠ '+f, {color:C.redDk})));
 }
 if ((genre.missing_elements||[]).length) {
   children.push(gap(60));
@@ -374,7 +440,9 @@ if ((genre.missing_elements||[]).length) {
   (genre.missing_elements||[]).forEach(m => children.push(para('• '+m, {color:C.redDk})));
 }
 children.push(gap(80));
-children.push(colorBox({ label:'장르 진단 (Doctoring)', text:genre.doctoring, bg:C.bgBlue, borderColor:C.navy }));
+if (genre.doctoring) {
+  children.push(colorBox({ label:'장르 진단 (Doctoring)', text:genre.doctoring, bg:C.bgBlue, borderColor:C.navy }));
+}
 children.push(divider());
 
 // ━━ 9. 시퀀스 워싱 ━━
