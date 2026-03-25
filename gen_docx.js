@@ -166,7 +166,7 @@ children.push(heading('4축 정밀 평가  (Hollywood Standard)', 2));
 
 const axW = [2400, 1400, 3400, W-2400-1400-3400];
 const axHeader = new TableRow({ children:[
-  ['AXIS','가중치','평가 기준','점수'].map((t,i) =>
+  ...['AXIS','가중치','평가 기준','점수'].map((t,i) =>
     new TableCell({ borders:bds(C.navy), shading:{fill:C.navy,type:ShadingType.CLEAR},
       margins:{top:80,bottom:80,left:120,right:120}, width:{size:axW[i],type:WidthType.DXA},
       children:[new Paragraph({children:[new TextRun({text:t,font:'Arial',size:17,bold:true,color:C.gold})]})] })
@@ -495,7 +495,7 @@ if (da.axis_scores) {
   const dColor = dScore>=7?C.greenDk : dScore>=4?C.goldDark : C.redDk;
   const dW2 = [2800, 3600, W-2800-3600];
   const daHdr = new TableRow({ children:[
-    ['평가 축','기준','점수'].map((t,i) =>
+    ...['평가 축','기준','점수'].map((t,i) =>
       new TableCell({ borders:bds(C.navy), shading:{fill:C.navy,type:ShadingType.CLEAR},
         margins:{top:80,bottom:80,left:120,right:120}, width:{size:dW2[i],type:WidthType.DXA},
         children:[new Paragraph({children:[new TextRun({text:t,font:'Arial',size:17,bold:true,color:C.gold})]})] })
