@@ -299,6 +299,20 @@ def apply_design():
         font-weight: 900 !important;
         border-radius: 10px !important;
     }
+    [data-testid="stDownloadButton"] button span,
+    [data-testid="stDownloadButton"] button p,
+    [data-testid="stDownloadButton"] button div {
+        color: #FFFFFF !important;
+    }
+    [data-testid="stDownloadButton"] button:hover {
+        background: #FFCB05 !important;
+        color: #191970 !important;
+    }
+    [data-testid="stDownloadButton"] button:hover span,
+    [data-testid="stDownloadButton"] button:hover p,
+    [data-testid="stDownloadButton"] button:hover div {
+        color: #191970 !important;
+    }
     /* ── Spinner: 배경 완전 투명 ── */
     [data-testid="stSpinner"] > div,
     [data-testid="stStatusWidget"] {
