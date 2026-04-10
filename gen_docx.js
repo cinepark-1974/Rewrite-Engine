@@ -1,7 +1,7 @@
 const {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
   Header, AlignmentType, BorderStyle, WidthType, ShadingType,
-  VerticalAlign, PageBreak, LevelFormat
+  VerticalAlign, PageBreak, LevelFormat, LineRuleType
 } = require('docx');
 const fs = require('fs');
 
@@ -33,13 +33,13 @@ function heading(text, level=1) {
 }
 function para(text, opts={}) {
   return new Paragraph({
-    spacing:{ line:360, before:40, after:40 },
+    spacing:{ line:360, lineRule:LineRuleType.AUTO, before:40, after:40 },
     children:[new TextRun({ text:text||'', font:'Arial', size:20, color:C.text, ...opts })]
   });
 }
 function kv(label, value) {
   return new Paragraph({
-    spacing:{ line:340, before:40, after:40 },
+    spacing:{ line:340, lineRule:LineRuleType.AUTO, before:40, after:40 },
     children:[
       new TextRun({ text:label+'  ', font:'Arial', size:20, bold:true, color:C.navy }),
       new TextRun({ text:String(value||'-'), font:'Arial', size:20, color:C.text }),
@@ -61,7 +61,7 @@ function colorBox({ label='', text='', bg=C.bgBlue, borderColor=C.navy, borderSi
   }));
   (text||'-').split('\n').forEach(line => {
     rows.push(new Paragraph({
-      spacing:{ line:340, before:20, after:20 },
+      spacing:{ line:340, lineRule:LineRuleType.AUTO, before:20, after:20 },
       children:[new TextRun({ text:line||'', font:'Arial', size:19, color:C.text })]
     }));
   });
@@ -89,7 +89,7 @@ function twoBox({ leftLabel, leftItems, leftBg, leftBd, rightLabel, rightItems, 
       children:[
         new Paragraph({ spacing:{after:60}, children:[new TextRun({ text:label, font:'Arial', size:17, bold:true, color:bc })] }),
         ...(items||[]).map(it => new Paragraph({
-          spacing:{ line:320, before:20, after:20 },
+          spacing:{ line:320, lineRule:LineRuleType.AUTO, before:20, after:20 },
           children:[new TextRun({ text:'• '+String(it), font:'Arial', size:19, color:C.text })]
         }))
       ]
@@ -181,13 +181,13 @@ const axData = [
 const axRows = axData.map(d => new TableRow({ children:[
   new TableCell({ borders:bds('DDDDDD'), shading:{fill:d.bg,type:ShadingType.CLEAR},
     margins:{top:80,bottom:80,left:120,right:120}, width:{size:axW[0],type:WidthType.DXA},
-    children:[new Paragraph({spacing:{line:310},children:[new TextRun({text:d.axis,font:'Arial',size:19,bold:true,color:C.navy})]})] }),
+    children:[new Paragraph({spacing:{line:310, lineRule:LineRuleType.AUTO},children:[new TextRun({text:d.axis,font:'Arial',size:19,bold:true,color:C.navy})]})] }),
   new TableCell({ borders:bds('DDDDDD'), shading:{fill:d.bg,type:ShadingType.CLEAR},
     margins:{top:80,bottom:80,left:120,right:120}, width:{size:axW[1],type:WidthType.DXA},
     children:[new Paragraph({alignment:AlignmentType.CENTER,children:[new TextRun({text:d.weight,font:'Arial',size:20,bold:true,color:C.navy})]})] }),
   new TableCell({ borders:bds('DDDDDD'), shading:{fill:d.bg,type:ShadingType.CLEAR},
     margins:{top:80,bottom:80,left:120,right:120}, width:{size:axW[2],type:WidthType.DXA},
-    children:[new Paragraph({spacing:{line:310},children:[new TextRun({text:d.criteria,font:'Arial',size:18,color:C.text})]})] }),
+    children:[new Paragraph({spacing:{line:310, lineRule:LineRuleType.AUTO},children:[new TextRun({text:d.criteria,font:'Arial',size:18,color:C.text})]})] }),
   new TableCell({ borders:bds('DDDDDD'), shading:{fill:d.bg,type:ShadingType.CLEAR},
     margins:{top:80,bottom:80,left:120,right:120}, width:{size:axW[3],type:WidthType.DXA},
     children:[new Paragraph({children:[new TextRun({text:scoreBar(d.val),font:'Courier New',size:17,color:d.color})]})] }),
@@ -246,7 +246,7 @@ children.push(new Table({
         children:[
           new Paragraph({ alignment:AlignmentType.CENTER, spacing:{ after:60 },
             children:[new TextRun({ text:lbl, font:'Arial', size:17, bold:true, color:C.goldDark })] }),
-          new Paragraph({ alignment:AlignmentType.CENTER, spacing:{ line:300 },
+          new Paragraph({ alignment:AlignmentType.CENTER, spacing:{ line:300, lineRule:LineRuleType.AUTO },
             children:[new TextRun({ text:val||'-', font:'Arial', size:19, color:C.text })] }),
         ]
       })
@@ -287,7 +287,7 @@ const beatRows2 = [
         ] }),
       new TableCell({ borders:bds('DDDDDD'), shading:{fill:bg,type:ShadingType.CLEAR},
         margins:{top:70,bottom:70,left:120,right:120}, width:{size:W-2600,type:WidthType.DXA},
-        children:[new Paragraph({spacing:{line:300},children:[new TextRun({text:String(beats[k]||'-'),font:'Arial',size:19,color:C.text})]})] }),
+        children:[new Paragraph({spacing:{line:300, lineRule:LineRuleType.AUTO},children:[new TextRun({text:String(beats[k]||'-'),font:'Arial',size:19,color:C.text})]})] }),
     ]});
   })
 ];
@@ -380,7 +380,7 @@ if (mustChecks.length) {
     const icon = c.status === '충족' ? '✅' : (c.status === '약함' ? '△' : '❌');
     const cl   = c.status === '충족' ? C.greenDk : (c.status === '약함' ? C.goldDark : C.redDk);
     children.push(new Paragraph({
-      spacing:{ line:340, before:30, after:30 },
+      spacing:{ line:340, lineRule:LineRuleType.AUTO, before:30, after:30 },
       children:[
         new TextRun({ text:`${icon} ${c.item||''} `, font:'Arial', size:19, bold:true, color:cl }),
         new TextRun({ text:`[${c.status||''}] `, font:'Arial', size:18, bold:true, color:cl }),
@@ -410,7 +410,7 @@ if (hp.hook_note || hp.punch_note) {
         margins:{top:100,bottom:100,left:160,right:160}, width:{size:hpHalf,type:WidthType.DXA},
         children:[
           new Paragraph({spacing:{after:40},children:[new TextRun({text:`${hp.hook_present?'✓':'✗'} Hook (오프닝)`,font:'Arial',size:17,bold:true,color:hp.hook_present?C.greenDk:C.redDk})]}),
-          new Paragraph({spacing:{line:310},children:[new TextRun({text:String(hp.hook_note||'-'),font:'Arial',size:18,color:C.text})]}),
+          new Paragraph({spacing:{line:310, lineRule:LineRuleType.AUTO},children:[new TextRun({text:String(hp.hook_note||'-'),font:'Arial',size:18,color:C.text})]}),
         ]
       }),
       new TableCell({
@@ -421,7 +421,7 @@ if (hp.hook_note || hp.punch_note) {
         margins:{top:100,bottom:100,left:160,right:160}, width:{size:W-hpHalf,type:WidthType.DXA},
         children:[
           new Paragraph({spacing:{after:40},children:[new TextRun({text:`${hp.punch_present?'✓':'✗'} Punch (결정타)`,font:'Arial',size:17,bold:true,color:hp.punch_present?C.greenDk:C.redDk})]}),
-          new Paragraph({spacing:{line:310},children:[new TextRun({text:String(hp.punch_note||'-'),font:'Arial',size:18,color:C.text})]}),
+          new Paragraph({spacing:{line:310, lineRule:LineRuleType.AUTO},children:[new TextRun({text:String(hp.punch_note||'-'),font:'Arial',size:18,color:C.text})]}),
         ]
       }),
     ]})]
@@ -465,7 +465,7 @@ washTable.forEach(row => {
         margins:{ top:100, bottom:100, left:160, right:160 }, width:{ size:wHalf, type:WidthType.DXA },
         children:[
           new Paragraph({ spacing:{ after:60 }, children:[new TextRun({ text:'⚠️ 진단', font:'Arial', size:17, bold:true, color:C.redDk })] }),
-          new Paragraph({ spacing:{ line:310 }, children:[new TextRun({ text:row.diagnosis||'-', font:'Arial', size:19, color:C.text })] })
+          new Paragraph({ spacing:{ line:310, lineRule:LineRuleType.AUTO }, children:[new TextRun({ text:row.diagnosis||'-', font:'Arial', size:19, color:C.text })] })
         ]
       }),
       new TableCell({
@@ -475,7 +475,7 @@ washTable.forEach(row => {
         margins:{ top:100, bottom:100, left:160, right:160 }, width:{ size:W-wHalf, type:WidthType.DXA },
         children:[
           new Paragraph({ spacing:{ after:60 }, children:[new TextRun({ text:'✅ 처방', font:'Arial', size:17, bold:true, color:C.navy })] }),
-          new Paragraph({ spacing:{ line:310 }, children:[new TextRun({ text:row.prescription||'-', font:'Arial', size:19, color:C.text })] })
+          new Paragraph({ spacing:{ line:310, lineRule:LineRuleType.AUTO }, children:[new TextRun({ text:row.prescription||'-', font:'Arial', size:19, color:C.text })] })
         ]
       }),
     ]})]
@@ -560,7 +560,7 @@ if ((da.issues||[]).length) {
           margins:{top:100,bottom:100,left:160,right:160}, width:{size:issH,type:WidthType.DXA},
           children:[
             new Paragraph({spacing:{after:60},children:[new TextRun({text:'❌ BEFORE (원문)',font:'Arial',size:17,bold:true,color:C.redDk})]}),
-            new Paragraph({spacing:{line:310},children:[new TextRun({text:String(issue.example_bad||'-'),font:'Courier New',size:18,color:'333333'})]}),
+            new Paragraph({spacing:{line:310, lineRule:LineRuleType.AUTO},children:[new TextRun({text:String(issue.example_bad||'-'),font:'Courier New',size:18,color:'333333'})]}),
           ]
         }),
         new TableCell({
@@ -570,7 +570,7 @@ if ((da.issues||[]).length) {
           margins:{top:100,bottom:100,left:160,right:160}, width:{size:W-issH,type:WidthType.DXA},
           children:[
             new Paragraph({spacing:{after:60},children:[new TextRun({text:'✅ ④ 개선 제안 (AFTER)',font:'Arial',size:17,bold:true,color:C.greenDk})]}),
-            new Paragraph({spacing:{line:310},children:[new TextRun({text:String(issue.example_good||'-'),font:'Courier New',size:18,color:'333333'})]}),
+            new Paragraph({spacing:{line:310, lineRule:LineRuleType.AUTO},children:[new TextRun({text:String(issue.example_good||'-'),font:'Courier New',size:18,color:'333333'})]}),
           ]
         }),
       ]})]
@@ -590,7 +590,7 @@ children.push(heading('11. 각색 제안  (Action Plan)'));
 suggestions.forEach((s,i) => {
   const clean = String(s).replace(/^[\d\.\s]+/,'').trim();
   children.push(new Paragraph({
-    spacing:{ line:340, before:60, after:60 },
+    spacing:{ line:340, lineRule:LineRuleType.AUTO, before:60, after:60 },
     children:[
       new TextRun({ text:`  STEP ${String(i+1).padStart(2,'0')}  `, font:'Arial', size:19, bold:true, color:C.white,
         shading:{ fill:C.navy, type:ShadingType.CLEAR } }),
@@ -650,7 +650,7 @@ scenes.forEach(sc => {
         margins:{top:80,bottom:80,left:160,right:160}, width:{size:W,type:WidthType.DXA},
         children:[
           new Paragraph({spacing:{after:40},children:[new TextRun({text:'📄 기존 씬 (BEFORE)',font:'Arial',size:16,bold:true,color:'888888'})]}),
-          new Paragraph({spacing:{line:300},children:[new TextRun({text:String(sc.original),font:'Arial',size:18,color:'555555'})]})
+          new Paragraph({spacing:{line:300, lineRule:LineRuleType.AUTO},children:[new TextRun({text:String(sc.original),font:'Arial',size:18,color:'555555'})]})
         ]
       })]})]}));
     children.push(gap(80));
@@ -676,7 +676,7 @@ scenes.forEach(sc => {
                 new TextRun({text:rest.join(':').trim(),font:'Courier New',size:19,color:C.text})
               ]});
           } else {
-            return new Paragraph({spacing:{line:300,before:20,after:20},
+            return new Paragraph({spacing:{line:300, lineRule:LineRuleType.AUTO,before:20,after:20},
               children:[new TextRun({text:l,font:'Courier New',size:18,color:'444444'})]});
           }
         })
