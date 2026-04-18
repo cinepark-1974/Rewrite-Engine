@@ -445,6 +445,217 @@ if (genre.doctoring) {
 }
 children.push(divider());
 
+// ━━ 8-B. OPENING MASTERY (v2.1 신규) ━━
+const om = genre.opening_mastery || {};
+if (om && Object.keys(om).length > 0) {
+  const TECHNIQUE_KO = {
+    "ACTION_DROP": "액션 드롭",
+    "COLD_OPEN": "콜드 오픈",
+    "TEASE_REVEAL": "티즈 앤 리빌",
+    "IN_MEDIA_RES": "인 미디어스 레스",
+    "CHARACTER_REVEAL_ACTION": "캐릭터 리빌 액션",
+    "HOOK_DIALOGUE": "훅 다이얼로그",
+    "UNDEFINED": "미정의 (약한 오프닝)"
+  };
+  const intended = om.intended_technique || 'UNDEFINED';
+  const intendedKo = TECHNIQUE_KO[intended] || intended;
+  const alignment = om.dna_alignment || 'partial';
+  const alignLabel = alignment === 'aligned' ? '✓ 장르 DNA 일치'
+                  : alignment === 'misaligned' ? '✗ 장르 DNA 불일치'
+                  : '△ 부분 일치';
+  const alignColor = alignment === 'aligned' ? C.greenDk
+                  : alignment === 'misaligned' ? C.redDk
+                  : C.goldDark;
+  const alignBg = alignment === 'aligned' ? C.bgGreen
+                : alignment === 'misaligned' ? C.bgRed
+                : C.bgYellow;
+  const openingScore = Number(om.opening_score || 0) || 0;
+
+  children.push(heading('8-B. 오프닝 마스터리 (Opening Mastery)'));
+
+  // 헤더 카드 (기법 + 일치도 + 점수)
+  children.push(kv('작가가 노린 기법', intendedKo));
+  children.push(new Paragraph({
+    spacing:{ line:340, lineRule:LineRuleType.AUTO, before:40, after:40 },
+    children:[
+      new TextRun({ text:'장르 DNA 일치도  ', font:'Arial', size:20, bold:true, color:C.navy }),
+      new TextRun({ text:alignLabel, font:'Arial', size:20, bold:true, color:alignColor }),
+    ]
+  }));
+  children.push(kv('오프닝 점수', scoreBar(openingScore)));
+
+  if (om.intended_technique_evidence) {
+    children.push(colorBox({ label:'근거', text:om.intended_technique_evidence, bg:C.light, borderColor:C.navy, borderSize:8 }));
+  }
+  if (om.dna_alignment_reason) {
+    children.push(colorBox({ label:'DNA 일치 분석', text:om.dna_alignment_reason, bg:alignBg, borderColor:alignColor }));
+  }
+
+  // 도파민 6감각 점수표
+  const dop = om.dopamine_scores || {};
+  const dopKeys = [
+    ['shock','충격'], ['laughter','웃음'], ['tension','긴장'],
+    ['wonder','경이'], ['curiosity','호기심'], ['emotional_resonance','감정 울림']
+  ];
+  children.push(gap(100));
+  children.push(heading('🧠 도파민 6감각 진단', 3));
+  const dopHalf = Math.floor(W/2);
+  const dopRows = dopKeys.map(([k, ko]) => {
+    const s = Number(dop[k] || 0) || 0;
+    const sColor = s >= 7 ? C.greenDk : (s >= 4 ? C.goldDark : C.redDk);
+    return new TableRow({ children:[
+      new TableCell({
+        borders:{ top:bd(C.gray,2), bottom:bd(C.gray,2), left:bd(C.gray,2), right:bd(C.gray,2) },
+        margins:{top:60,bottom:60,left:140,right:140}, width:{size:dopHalf,type:WidthType.DXA},
+        children:[new Paragraph({ children:[new TextRun({ text:ko, font:'Arial', size:19, bold:true, color:C.navy })] })]
+      }),
+      new TableCell({
+        borders:{ top:bd(C.gray,2), bottom:bd(C.gray,2), left:bd(C.gray,2), right:bd(C.gray,2) },
+        margins:{top:60,bottom:60,left:140,right:140}, width:{size:W-dopHalf,type:WidthType.DXA},
+        children:[new Paragraph({ children:[new TextRun({ text:scoreBar(s), font:'Courier New', size:18, color:sColor, bold:true })] })]
+      }),
+    ]});
+  });
+  children.push(new Table({
+    width:{ size:W, type:WidthType.DXA }, columnWidths:[dopHalf, W-dopHalf],
+    rows:dopRows
+  }));
+
+  // 작동/누락 도파민
+  const working = Array.isArray(om.dopamine_working) ? om.dopamine_working : [];
+  const missing = Array.isArray(om.dopamine_missing) ? om.dopamine_missing : [];
+  if (working.length || missing.length) {
+    children.push(gap(80));
+    children.push(twoBox({
+      leftLabel:'✅ 작동 중인 감각', leftItems:working.length?working:['(없음)'],
+      leftBg:C.bgGreen, leftBd:C.green,
+      rightLabel:'❌ 누락된 감각 (장르 DNA 요구)', rightItems:missing.length?missing:['(없음)'],
+      rightBg:C.bgRed, rightBd:C.red
+    }));
+  }
+
+  // 자극 vs 도파민 경고
+  if (om.provocation_without_dopamine) {
+    children.push(gap(80));
+    children.push(colorBox({
+      label:'⚠️ 자극만 있고 도파민 없음 (Provocation without Dopamine)',
+      text: om.provocation_note || '첫 씬에 강한 자극은 있으나 관객 뇌에 꽂히는 도파민 감각이 작동하지 않음.',
+      bg:C.bgRed, borderColor:C.red
+    }));
+  }
+
+  // 복합 장르 체크
+  const cgc = om.complex_genre_check || {};
+  if (cgc.is_complex) {
+    const follows = cgc.opening_follows_core;
+    const cgBg = follows ? C.bgGreen : C.bgRed;
+    const cgBd = follows ? C.green : C.red;
+    const cgIcon = follows ? '✓' : '✗';
+    const cgText = `표면: ${cgc.primary_genre || '-'}   ·   본질: ${cgc.core_genre || '-'}\n${cgc.note || ''}`;
+    children.push(gap(80));
+    children.push(colorBox({
+      label:`${cgIcon} 복합 장르 — 두 번째 장르 = 본질`,
+      text:cgText, bg:cgBg, borderColor:cgBd
+    }));
+  }
+
+  // 오프닝 종합 진단
+  if (om.opening_diagnosis) {
+    children.push(gap(80));
+    children.push(colorBox({
+      label:'🎬 오프닝 종합 진단',
+      text:om.opening_diagnosis, bg:C.bgYellow, borderColor:C.gold
+    }));
+  }
+  children.push(divider());
+}
+
+// ━━ 8-C. OPENING RX — SHIHO 교정 처방 (v2.1 신규) ━━
+const rx = wa.opening_rx || {};
+if (rx && Object.keys(rx).length > 0) {
+  const TECHNIQUE_KO = {
+    "ACTION_DROP": "액션 드롭",
+    "COLD_OPEN": "콜드 오픈",
+    "TEASE_REVEAL": "티즈 앤 리빌",
+    "IN_MEDIA_RES": "인 미디어스 레스",
+    "CHARACTER_REVEAL_ACTION": "캐릭터 리빌 액션",
+    "HOOK_DIALOGUE": "훅 다이얼로그",
+    "UNDEFINED": "미정의"
+  };
+  const respect = rx.respect_intent !== false;
+  const kept = rx.intent_kept_technique || '';
+  const keptKo = TECHNIQUE_KO[kept] || kept;
+
+  children.push(heading('8-C. 오프닝 교정 처방 (Opening RX)'));
+
+  // 존중 여부 배지
+  children.push(new Paragraph({
+    spacing:{ line:340, lineRule:LineRuleType.AUTO, before:40, after:40 },
+    children:[
+      new TextRun({ text:respect ? '✓ 작가 의도 존중 — 기법 유지' : '↻ 기법 전환 권장',
+                    font:'Arial', size:20, bold:true, color:respect?C.greenDk:C.goldDark }),
+    ]
+  }));
+  children.push(kv('유지 기법', keptKo));
+
+  if (rx.switch_reason) {
+    children.push(colorBox({
+      label:'↻ 기법 전환 이유', text:rx.switch_reason,
+      bg:C.bgRed, borderColor:C.red
+    }));
+  }
+  if (rx.completion_plan) {
+    children.push(colorBox({
+      label:'✨ 완성도 끌어올림 방안', text:rx.completion_plan,
+      bg:C.bgBlue, borderColor:C.navy
+    }));
+  }
+
+  // 보존 항목
+  const preserveList = Array.isArray(rx.preserve_from_original) ? rx.preserve_from_original : [];
+  if (preserveList.length) {
+    children.push(gap(80));
+    children.push(heading('🔒 원본에서 반드시 보존할 것', 3));
+    preserveList.forEach(p => children.push(para('• ' + String(p), { color:C.greenDk })));
+  }
+
+  // 도파민 보강 처방
+  const inj = Array.isArray(rx.dopamine_injection) ? rx.dopamine_injection : [];
+  if (inj.length) {
+    children.push(gap(80));
+    children.push(heading('💊 도파민 보강 처방', 3));
+    inj.forEach(d => {
+      if (d && typeof d === 'object') {
+        const sense = d.sense || '';
+        const how = d.how || '';
+        children.push(colorBox({
+          label:`🧠 ${sense}`, text:how,
+          bg:C.bgYellow, borderColor:C.gold, borderSize:8
+        }));
+      }
+    });
+  }
+
+  // 복합 장르 조정
+  if (rx.complex_genre_note) {
+    children.push(gap(80));
+    children.push(colorBox({
+      label:'🎭 복합 장르 조정', text:rx.complex_genre_note,
+      bg:C.bgRed, borderColor:C.red
+    }));
+  }
+
+  // 교정 전체 방향
+  if (rx.overall_direction) {
+    children.push(gap(80));
+    children.push(colorBox({
+      label:'🧭 교정 전체 방향', text:rx.overall_direction,
+      bg:C.bgYellow, borderColor:C.gold
+    }));
+  }
+  children.push(divider());
+}
+
 // ━━ 9. 시퀀스 워싱 ━━
 children.push(new Paragraph({ children:[new PageBreak()] }));
 children.push(heading('9. 시퀀스 워싱  (Washing Table)'));
@@ -455,6 +666,13 @@ washTable.forEach(row => {
       new TextRun({ text:`${row.seq||''}  `, font:'Arial', size:22, bold:true, color:C.gold }),
       new TextRun({ text:row.label||'', font:'Arial', size:22, bold:true, color:C.navy }),
     ]}));
+  // 오프닝 노트 (Seq 1에 주로 붙음)
+  if (row.opening_note) {
+    children.push(colorBox({
+      label:'🎬 오프닝 노트', text:row.opening_note,
+      bg:C.bgYellow, borderColor:C.gold, borderSize:8
+    }));
+  }
   children.push(new Table({
     width:{ size:W, type:WidthType.DXA }, columnWidths:[wHalf, W-wHalf],
     rows:[new TableRow({ children:[
