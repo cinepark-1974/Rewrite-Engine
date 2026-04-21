@@ -115,6 +115,10 @@ const raw  = JSON.parse(fs.readFileSync(inputPath,'utf8'));
 const an   = raw.analysis  || {};
 const wa   = raw.washing   || {};
 const re   = raw.rewriting || {};
+// export_level: 'chris' | 'shiho' | 'full' (기본 'full')
+const exportLevel = raw.export_level || 'full';
+const showShiho = (exportLevel !== 'chris');
+const showMoon  = (exportLevel === 'full');
 const mark      = an.mark?.final ?? 0;
 const scores    = an.scores || {};
 const verdict   = an.verdict || {};
@@ -572,7 +576,7 @@ if (om && Object.keys(om).length > 0) {
 
 // ━━ 8-C. OPENING RX — SHIHO 교정 처방 (v2.1 신규) ━━
 const rx = wa.opening_rx || {};
-if (rx && Object.keys(rx).length > 0) {
+if (showShiho && rx && Object.keys(rx).length > 0) {
   const TECHNIQUE_KO = {
     "ACTION_DROP": "액션 드롭",
     "COLD_OPEN": "콜드 오픈",
@@ -657,55 +661,58 @@ if (rx && Object.keys(rx).length > 0) {
 }
 
 // ━━ 9. 시퀀스 워싱 ━━
-children.push(new Paragraph({ children:[new PageBreak()] }));
-children.push(heading('9. 시퀀스 워싱  (Washing Table)'));
-const wHalf = Math.floor(W/2);
-washTable.forEach(row => {
-  children.push(new Paragraph({ spacing:{ before:160, after:60 },
-    children:[
-      new TextRun({ text:`${row.seq||''}  `, font:'Arial', size:22, bold:true, color:C.gold }),
-      new TextRun({ text:row.label||'', font:'Arial', size:22, bold:true, color:C.navy }),
-    ]}));
-  // 오프닝 노트 (Seq 1에 주로 붙음)
-  if (row.opening_note) {
-    children.push(colorBox({
-      label:'🎬 오프닝 노트', text:row.opening_note,
-      bg:C.bgYellow, borderColor:C.gold, borderSize:8
+if (showShiho) {
+  children.push(new Paragraph({ children:[new PageBreak()] }));
+  children.push(heading('9. 시퀀스 워싱  (Washing Table)'));
+  const wHalf = Math.floor(W/2);
+  washTable.forEach(row => {
+    children.push(new Paragraph({ spacing:{ before:160, after:60 },
+      children:[
+        new TextRun({ text:`${row.seq||''}  `, font:'Arial', size:22, bold:true, color:C.gold }),
+        new TextRun({ text:row.label||'', font:'Arial', size:22, bold:true, color:C.navy }),
+      ]}));
+    // 오프닝 노트 (Seq 1에 주로 붙음)
+    if (row.opening_note) {
+      children.push(colorBox({
+        label:'🎬 오프닝 노트', text:row.opening_note,
+        bg:C.bgYellow, borderColor:C.gold, borderSize:8
+      }));
+    }
+    children.push(new Table({
+      width:{ size:W, type:WidthType.DXA }, columnWidths:[wHalf, W-wHalf],
+      rows:[new TableRow({ children:[
+        new TableCell({
+          borders:{ top:bd('DDDDDD'), bottom:bd('DDDDDD'), right:bd('DDDDDD'),
+                    left:{ style:BorderStyle.SINGLE, size:12, color:C.red } },
+          shading:{ fill:'FFF5F5', type:ShadingType.CLEAR },
+          margins:{ top:100, bottom:100, left:160, right:160 }, width:{ size:wHalf, type:WidthType.DXA },
+          children:[
+            new Paragraph({ spacing:{ after:60 }, children:[new TextRun({ text:'⚠️ 진단', font:'Arial', size:17, bold:true, color:C.redDk })] }),
+            new Paragraph({ spacing:{ line:310, lineRule:LineRuleType.AUTO }, children:[new TextRun({ text:row.diagnosis||'-', font:'Arial', size:19, color:C.text })] })
+          ]
+        }),
+        new TableCell({
+          borders:{ top:bd('DDDDDD'), bottom:bd('DDDDDD'), right:bd('DDDDDD'),
+                    left:{ style:BorderStyle.SINGLE, size:12, color:C.navy } },
+          shading:{ fill:C.bgBlue, type:ShadingType.CLEAR },
+          margins:{ top:100, bottom:100, left:160, right:160 }, width:{ size:W-wHalf, type:WidthType.DXA },
+          children:[
+            new Paragraph({ spacing:{ after:60 }, children:[new TextRun({ text:'✅ 처방', font:'Arial', size:17, bold:true, color:C.navy })] }),
+            new Paragraph({ spacing:{ line:310, lineRule:LineRuleType.AUTO }, children:[new TextRun({ text:row.prescription||'-', font:'Arial', size:19, color:C.text })] })
+          ]
+        }),
+      ]})]
     }));
-  }
-  children.push(new Table({
-    width:{ size:W, type:WidthType.DXA }, columnWidths:[wHalf, W-wHalf],
-    rows:[new TableRow({ children:[
-      new TableCell({
-        borders:{ top:bd('DDDDDD'), bottom:bd('DDDDDD'), right:bd('DDDDDD'),
-                  left:{ style:BorderStyle.SINGLE, size:12, color:C.red } },
-        shading:{ fill:'FFF5F5', type:ShadingType.CLEAR },
-        margins:{ top:100, bottom:100, left:160, right:160 }, width:{ size:wHalf, type:WidthType.DXA },
-        children:[
-          new Paragraph({ spacing:{ after:60 }, children:[new TextRun({ text:'⚠️ 진단', font:'Arial', size:17, bold:true, color:C.redDk })] }),
-          new Paragraph({ spacing:{ line:310, lineRule:LineRuleType.AUTO }, children:[new TextRun({ text:row.diagnosis||'-', font:'Arial', size:19, color:C.text })] })
-        ]
-      }),
-      new TableCell({
-        borders:{ top:bd('DDDDDD'), bottom:bd('DDDDDD'), right:bd('DDDDDD'),
-                  left:{ style:BorderStyle.SINGLE, size:12, color:C.navy } },
-        shading:{ fill:C.bgBlue, type:ShadingType.CLEAR },
-        margins:{ top:100, bottom:100, left:160, right:160 }, width:{ size:W-wHalf, type:WidthType.DXA },
-        children:[
-          new Paragraph({ spacing:{ after:60 }, children:[new TextRun({ text:'✅ 처방', font:'Arial', size:17, bold:true, color:C.navy })] }),
-          new Paragraph({ spacing:{ line:310, lineRule:LineRuleType.AUTO }, children:[new TextRun({ text:row.prescription||'-', font:'Arial', size:19, color:C.text })] })
-        ]
-      }),
-    ]})]
-  }));
-});
-children.push(divider());
+  });
+  children.push(divider());
+}
 
 // ━━ 10. 대사 워싱 (Dialogue Washing) ━━
-children.push(heading('10. 대사 워싱  (Dialogue Washing)'));
-children.push(new Paragraph({ spacing:{ before:60, after:80 },
-  children:[new TextRun({ text:'① 캐릭터 적합성  ② 서브텍스트  ③ 행동/감정/관계 구동  ④ 개선 제안',
-    font:'Arial', size:18, color:C.sub })] }));
+if (showShiho) {
+  children.push(heading('10. 대사 워싱  (Dialogue Washing)'));
+  children.push(new Paragraph({ spacing:{ before:60, after:80 },
+    children:[new TextRun({ text:'① 캐릭터 적합성  ② 서브텍스트  ③ 행동/감정/관계 구동  ④ 개선 제안',
+      font:'Arial', size:18, color:C.sub })] }));
 
 if (da.axis_scores) {
   const ax = da.axis_scores;
@@ -817,15 +824,17 @@ suggestions.forEach((s,i) => {
   }));
 });
 children.push(divider());
+} // ← showShiho 블록 닫기 (섹션 10~11)
 
 // ━━ 12. 각색 원고 ━━
-children.push(new Paragraph({ children:[new PageBreak()] }));
-children.push(heading('12. 각색 원고  (Rewrite Scenes)'));
-if (rwData.target_reason) {
-  children.push(colorBox({ label:'✏️ 각색 전략', text:rwData.target_reason, bg:C.bgYellow, borderColor:C.gold }));
-  children.push(gap(80));
-}
-const revised = scenes.filter(s=>s.type==='수정씬').length;
+if (showMoon) {
+  children.push(new Paragraph({ children:[new PageBreak()] }));
+  children.push(heading('12. 각색 원고  (Rewrite Scenes)'));
+  if (rwData.target_reason) {
+    children.push(colorBox({ label:'✏️ 각색 전략', text:rwData.target_reason, bg:C.bgYellow, borderColor:C.gold }));
+    children.push(gap(80));
+  }
+  const revised = scenes.filter(s=>s.type==='수정씬').length;
 const added   = scenes.filter(s=>s.type==='추가씬').length;
 children.push(new Paragraph({ spacing:{before:60,after:100},
   children:[
@@ -902,6 +911,7 @@ scenes.forEach(sc => {
     })]})]}));
   children.push(gap(80));
 });
+} // ← showMoon 블록 닫기 (섹션 12)
 
 // ━━ 푸터 ━━
 children.push(divider());
