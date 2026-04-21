@@ -1,3 +1,18 @@
+# =================================================================
+# 👖 BLUE JEANS REWRITE ENGINE v2.2
+# main.py — Streamlit 웹앱 (CHRIS / SHIHO / MOON 3-agent 파이프라인)
+# =================================================================
+# © 2026 BLUE JEANS PICTURES. All rights reserved.
+#
+# v2.2 주요 기능:
+# - 3-agent 파이프라인 (CHRIS 분석 → SHIHO 진단·처방 → MOON 리라이트)
+# - OPENING MASTERY 모듈 (6기법 + 장르 DNA 8종 + 도파민 6감각)
+# - 3단계 다운로드 (각 에이전트 완료 시점별 DOCX)
+#   · CHRIS 분석 리포트 (섹션 1~8-B)
+#   · 진단·처방 리포트 (섹션 1~11, MOON 제외)
+#   · 최종 통합 보고서 (섹션 1~12, 전체)
+# =================================================================
+
 import streamlit as st
 import anthropic
 from PyPDF2 import PdfReader
@@ -1342,7 +1357,7 @@ def render_analysis(data):
         </div>""", unsafe_allow_html=True)
 
     # ═══════════════════════════════════════════════════════════════
-    # 8-B. OPENING MASTERY (v2.1 신규)
+    # 8-B. OPENING MASTERY (v2.2)
     # ═══════════════════════════════════════════════════════════════
     om = genre.get('opening_mastery', {})
     if om and isinstance(om, dict):
@@ -1535,7 +1550,7 @@ def render_analysis(data):
 
 def render_washing(data):
     # ═══════════════════════════════════════════════════════════════
-    # 8-C. OPENING RX — SHIHO의 오프닝 교정 처방 (v2.1 신규)
+    # 8-C. OPENING RX — SHIHO의 오프닝 교정 처방 (v2.2)
     # ═══════════════════════════════════════════════════════════════
     rx = data.get('opening_rx', {})
     if rx and isinstance(rx, dict):
@@ -2180,7 +2195,7 @@ def _create_docx_fallback(item, level="full"):
             if genre.get('doctoring'):
                 doc.add_paragraph(safe_str(genre.get('doctoring', '')))
 
-            # ─── 7-B. OPENING MASTERY (v2.1) ───
+            # ─── 7-B. OPENING MASTERY (v2.2) ───
             om = genre.get('opening_mastery', {})
             if isinstance(om, dict) and om:
                 TECH_KO = {
@@ -2224,7 +2239,7 @@ def _create_docx_fallback(item, level="full"):
                 if om.get('opening_diagnosis'):
                     doc.add_paragraph(f"오프닝 종합 진단: {safe_str(om.get('opening_diagnosis',''))}")
 
-            # ─── 7-C. OPENING RX (v2.1) — SHIHO 자료, level='chris'에서는 스킵 ───
+            # ─── 7-C. OPENING RX (v2.2) — SHIHO 자료, level='chris'에서는 스킵 ───
             rx = item.get('opening_rx', {})
             if level != "chris" and isinstance(rx, dict) and rx:
                 TECH_KO = {
