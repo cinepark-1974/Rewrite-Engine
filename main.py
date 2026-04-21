@@ -1429,6 +1429,19 @@ def render_analysis(data):
 
         opening_diag = safe(om.get('opening_diagnosis', ''))
 
+        # ── 조건부 HTML 미리 조립 (f-string 안 삼항연산자 회피) ──
+        evidence_html = (
+            f'<div style="background:#F8F9FF;padding:10px 14px;border-radius:8px;font-size:0.82rem;color:#191970;line-height:1.7;margin-bottom:10px;">'
+            f'<strong style="color:#B8860B;">근거:</strong> {intended_evidence}'
+            f'</div>'
+        ) if intended_evidence else ''
+
+        alignment_html = (
+            f'<div style="background:#F8F9FF;padding:10px 14px;border-radius:8px;font-size:0.82rem;color:#191970;line-height:1.7;">'
+            f'<strong style="color:#B8860B;">DNA 일치 분석:</strong> {alignment_reason}'
+            f'</div>'
+        ) if alignment_reason else ''
+
         # ── 헤더 카드 ──
         st.markdown(f"""
         <div class="report-card">
@@ -1448,9 +1461,24 @@ def render_analysis(data):
                     <div style="font-size:1.8rem;font-weight:950;color:{score_color};line-height:1;">{opening_score_num}<span style="font-size:0.9rem;opacity:0.5;">/10</span></div>
                 </div>
             </div>
-            {f'<div style="background:#F8F9FF;padding:10px 14px;border-radius:8px;font-size:0.82rem;color:#191970;line-height:1.7;margin-bottom:10px;"><strong style="color:#B8860B;">근거:</strong> {intended_evidence}</div>' if intended_evidence else ''}
-            {f'<div style="background:#F8F9FF;padding:10px 14px;border-radius:8px;font-size:0.82rem;color:#191970;line-height:1.7;"><strong style="color:#B8860B;">DNA 일치 분석:</strong> {alignment_reason}</div>' if alignment_reason else ''}
+            {evidence_html}
+            {alignment_html}
         </div>""", unsafe_allow_html=True)
+
+        # ── 도파민 작동/누락 섹션도 조건부 HTML 미리 조립 ──
+        working_html = (
+            f'<div style="margin-top:12px;">'
+            f'<strong style="font-size:0.72rem;color:#1A7A50;display:block;margin-bottom:6px;">✅ 작동 중인 감각</strong>'
+            f'{working_tags}'
+            f'</div>'
+        ) if working_tags else ''
+
+        missing_html = (
+            f'<div style="margin-top:10px;">'
+            f'<strong style="font-size:0.72rem;color:#CC3300;display:block;margin-bottom:6px;">❌ 누락된 감각 (장르 DNA 요구)</strong>'
+            f'{missing_tags}'
+            f'</div>'
+        ) if missing_tags else ''
 
         # ── 도파민 6감각 테이블 ──
         st.markdown(f"""
@@ -1459,8 +1487,8 @@ def render_analysis(data):
             <table style="width:100%;border-collapse:collapse;">
                 <tbody>{dop_rows}</tbody>
             </table>
-            {f'<div style="margin-top:12px;"><strong style="font-size:0.72rem;color:#1A7A50;display:block;margin-bottom:6px;">✅ 작동 중인 감각</strong>{working_tags}</div>' if working_tags else ''}
-            {f'<div style="margin-top:10px;"><strong style="font-size:0.72rem;color:#CC3300;display:block;margin-bottom:6px;">❌ 누락된 감각 (장르 DNA 요구)</strong>{missing_tags}</div>' if missing_tags else ''}
+            {working_html}
+            {missing_html}
         </div>""", unsafe_allow_html=True)
 
         # ── 자극 vs 도파민 경고 ──
@@ -1553,6 +1581,49 @@ def render_washing(data):
                         f"</div>"
                     )
 
+        # ── 조건부 HTML 블록을 미리 조립 (f-string 안 삼항연산자 회피) ──
+        switch_html = (
+            f'<div style="background:#FFF5F5;border-left:3px solid #D32F2F;padding:10px 14px;border-radius:6px;margin-bottom:10px;">'
+            f'<strong style="font-size:0.72rem;color:#D32F2F;display:block;margin-bottom:4px;">↻ 기법 전환 이유</strong>'
+            f'<div style="font-size:0.84rem;color:#191970;line-height:1.6;">{switch_reason}</div>'
+            f'</div>'
+        ) if switch_reason else ''
+
+        completion_html = (
+            f'<div style="background:#EEF0FA;padding:12px 14px;border-radius:8px;margin-bottom:10px;">'
+            f'<strong style="font-size:0.72rem;color:#191970;display:block;margin-bottom:6px;">✨ 완성도 끌어올림 방안</strong>'
+            f'<div style="font-size:0.88rem;color:#191970;line-height:1.7;">{completion}</div>'
+            f'</div>'
+        ) if completion else ''
+
+        preserve_html = (
+            f'<div style="margin-bottom:10px;">'
+            f'<strong style="font-size:0.75rem;color:#1A7A50;display:block;margin-bottom:6px;">🔒 원본에서 반드시 보존할 것</strong>'
+            f'<ul style="margin:0;padding-left:20px;">{preserve_items}</ul>'
+            f'</div>'
+        ) if preserve_items else ''
+
+        inj_html = (
+            f'<div style="margin-bottom:10px;">'
+            f'<strong style="font-size:0.75rem;color:#B8860B;display:block;margin-bottom:6px;">💊 도파민 보강 처방</strong>'
+            f'{inj_items}'
+            f'</div>'
+        ) if inj_items else ''
+
+        complex_html = (
+            f'<div style="background:#FFF3EE;border-left:3px solid #FF6432;padding:10px 14px;border-radius:6px;margin-bottom:10px;">'
+            f'<strong style="font-size:0.72rem;color:#CC3300;display:block;margin-bottom:4px;">🎭 복합 장르 조정</strong>'
+            f'<div style="font-size:0.84rem;color:#191970;line-height:1.6;">{complex_note}</div>'
+            f'</div>'
+        ) if complex_note else ''
+
+        direction_html = (
+            f'<div style="background:#FFFBE6;border:1px dashed #FFCB05;padding:12px 14px;border-radius:8px;">'
+            f'<strong style="font-size:0.72rem;color:#B8860B;display:block;margin-bottom:4px;">🧭 교정 전체 방향</strong>'
+            f'<div style="font-size:0.88rem;color:#191970;line-height:1.7;font-weight:600;">{direction}</div>'
+            f'</div>'
+        ) if direction else ''
+
         st.markdown(f"""
         <div class="report-card">
             <h3>8-C. 오프닝 교정 처방 (Opening RX)</h3>
@@ -1565,12 +1636,12 @@ def render_washing(data):
                     유지 기법: {safe(kept_ko)}
                 </div>
             </div>
-            {f'<div style="background:#FFF5F5;border-left:3px solid #D32F2F;padding:10px 14px;border-radius:6px;margin-bottom:10px;"><strong style="font-size:0.72rem;color:#D32F2F;display:block;margin-bottom:4px;">↻ 기법 전환 이유</strong><div style="font-size:0.84rem;color:#191970;line-height:1.6;">{switch_reason}</div></div>' if switch_reason else ''}
-            {f'<div style="background:#EEF0FA;padding:12px 14px;border-radius:8px;margin-bottom:10px;"><strong style="font-size:0.72rem;color:#191970;display:block;margin-bottom:6px;">✨ 완성도 끌어올림 방안</strong><div style="font-size:0.88rem;color:#191970;line-height:1.7;">{completion}</div></div>' if completion else ''}
-            {f'<div style="margin-bottom:10px;"><strong style="font-size:0.75rem;color:#1A7A50;display:block;margin-bottom:6px;">🔒 원본에서 반드시 보존할 것</strong><ul style="margin:0;padding-left:20px;">{preserve_items}</ul></div>' if preserve_items else ''}
-            {f'<div style="margin-bottom:10px;"><strong style="font-size:0.75rem;color:#B8860B;display:block;margin-bottom:6px;">💊 도파민 보강 처방</strong>{inj_items}</div>' if inj_items else ''}
-            {f'<div style="background:#FFF3EE;border-left:3px solid #FF6432;padding:10px 14px;border-radius:6px;margin-bottom:10px;"><strong style="font-size:0.72rem;color:#CC3300;display:block;margin-bottom:4px;">🎭 복합 장르 조정</strong><div style="font-size:0.84rem;color:#191970;line-height:1.6;">{complex_note}</div></div>' if complex_note else ''}
-            {f'<div style="background:#FFFBE6;border:1px dashed #FFCB05;padding:12px 14px;border-radius:8px;"><strong style="font-size:0.72rem;color:#B8860B;display:block;margin-bottom:4px;">🧭 교정 전체 방향</strong><div style="font-size:0.88rem;color:#191970;line-height:1.7;font-weight:600;">{direction}</div></div>' if direction else ''}
+            {switch_html}
+            {completion_html}
+            {preserve_html}
+            {inj_html}
+            {complex_html}
+            {direction_html}
         </div>""", unsafe_allow_html=True)
 
     # 9. 시퀀스 워싱
@@ -1581,13 +1652,19 @@ def render_washing(data):
         diagnosis    = safe(row.get('diagnosis', ''))
         prescription = safe(row.get('prescription', ''))
         opening_note = safe(row.get('opening_note', ''))
+        opening_note_html = (
+            f'<div style="background:#FFFBE6;border-left:3px solid #FFCB05;padding:8px 12px;border-radius:6px;margin-bottom:10px;font-size:0.82rem;color:#191970;line-height:1.6;">'
+            f'<strong style="font-size:0.7rem;color:#B8860B;">🎬 오프닝 노트:</strong> {opening_note}'
+            f'</div>'
+        ) if opening_note else ''
+
         st.markdown(f"""
         <div style="background:#FFFFFF;border:1px solid #E6E9EF;border-radius:10px;padding:16px;margin-bottom:12px;">
             <div style="margin-bottom:10px;">
                 <span style="background:#191970;color:#FFFFFF !important;padding:2px 10px;border-radius:4px;font-weight:900;font-size:0.72rem;">{seq}</span>
                 <span style="font-weight:700;margin-left:10px;color:#191970;">{label}</span>
             </div>
-            {f'<div style="background:#FFFBE6;border-left:3px solid #FFCB05;padding:8px 12px;border-radius:6px;margin-bottom:10px;font-size:0.82rem;color:#191970;line-height:1.6;"><strong style="font-size:0.7rem;color:#B8860B;">🎬 오프닝 노트:</strong> {opening_note}</div>' if opening_note else ''}
+            {opening_note_html}
             <div style="display:flex;gap:12px;">
                 <div style="flex:1;background:#FFF5F5;padding:12px;border-radius:8px;border-left:3px solid #D32F2F;">
                     <div style="color:#D32F2F;font-size:0.72rem;font-weight:800;margin-bottom:5px;">⚠️ 진단</div>
@@ -1844,21 +1921,44 @@ def render_rewriting(data):
 # =================================================================
 # [8] DOCX 생성
 # =================================================================
-def create_docx(item):
-    """DOCX 보고서 생성 — Node.js 우선, 실패 시 python-docx fallback"""
+def create_docx(item, level="full"):
+    """DOCX 보고서 생성 — level 파라미터로 출력 범위 제어
+    level:
+      'chris'   : CHRIS 분석만 (섹션 1~8-B)
+      'shiho'   : CHRIS + SHIHO (섹션 1~11, MOON 제외)
+      'full'    : CHRIS + SHIHO + MOON (섹션 1~12, 기존 기본값)
+    """
     import subprocess, tempfile, os, shutil
 
-    # report_data.json 생성
-    report_data = {
-        "analysis": item,
-        "washing": {
+    # level에 따라 washing/rewriting 섹션 필터링
+    if level == "chris":
+        washing_payload = {}  # SHIHO 전체 제거
+        rewriting_payload = {"rewriting": {}}
+    elif level == "shiho":
+        washing_payload = {
             "washing_table":      item.get("washing_table", []),
             "dialogue_analysis":  item.get("dialogue_analysis", {}),
             "suggestions":        item.get("suggestions", []),
             "opening_rx":         item.get("opening_rx", {}),
             "genre_fun_recovery": item.get("genre_fun_recovery", {})
-        },
-        "rewriting": {"rewriting": item.get("rewriting", {})}
+        }
+        rewriting_payload = {"rewriting": {}}  # MOON 제거
+    else:  # full
+        washing_payload = {
+            "washing_table":      item.get("washing_table", []),
+            "dialogue_analysis":  item.get("dialogue_analysis", {}),
+            "suggestions":        item.get("suggestions", []),
+            "opening_rx":         item.get("opening_rx", {}),
+            "genre_fun_recovery": item.get("genre_fun_recovery", {})
+        }
+        rewriting_payload = {"rewriting": item.get("rewriting", {})}
+
+    # report_data.json 생성
+    report_data = {
+        "analysis":  item,
+        "washing":   washing_payload,
+        "rewriting": rewriting_payload,
+        "export_level": level  # gen_docx.js가 참조 (디버깅/향후 확장용)
     }
 
     tmp_dir = tempfile.mkdtemp()
@@ -1876,7 +1976,7 @@ def create_docx(item):
     try:
         shutil.copy2(script_src, script_path)
     except Exception:
-        return _create_docx_fallback(item)
+        return _create_docx_fallback(item, level=level)
 
     # docx npm 패키지 설치
     nm_path = os.path.join(tmp_dir, "node_modules", "docx")
@@ -1888,9 +1988,9 @@ def create_docx(item):
                 cwd=tmp_dir
             )
             if npm_result.returncode != 0:
-                return _create_docx_fallback(item)
+                return _create_docx_fallback(item, level=level)
         except Exception:
-            return _create_docx_fallback(item)
+            return _create_docx_fallback(item, level=level)
 
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(report_data, f, ensure_ascii=False)
@@ -1903,17 +2003,17 @@ def create_docx(item):
         )
     except Exception:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-        return _create_docx_fallback(item)
+        return _create_docx_fallback(item, level=level)
 
     # 파일 존재 + 크기 검증 (10KB 미만이면 손상으로 판단)
     if result.returncode != 0 or not os.path.exists(out_path):
         shutil.rmtree(tmp_dir, ignore_errors=True)
-        return _create_docx_fallback(item)
+        return _create_docx_fallback(item, level=level)
 
     file_size = os.path.getsize(out_path)
     if file_size < 10000:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-        return _create_docx_fallback(item)
+        return _create_docx_fallback(item, level=level)
 
     with open(out_path, "rb") as f:
         data = f.read()
@@ -1922,8 +2022,10 @@ def create_docx(item):
     return data
 
 
-def _create_docx_fallback(item):
-    """Node.js 실패 시 python-docx fallback — 전체 섹션 반영"""
+def _create_docx_fallback(item, level="full"):
+    """Node.js 실패 시 python-docx fallback — level에 따라 섹션 필터링
+    level: 'chris' | 'shiho' | 'full'
+    """
 
     def safe_int(v, default=0):
         try: return int(float(v))
@@ -2122,9 +2224,9 @@ def _create_docx_fallback(item):
                 if om.get('opening_diagnosis'):
                     doc.add_paragraph(f"오프닝 종합 진단: {safe_str(om.get('opening_diagnosis',''))}")
 
-            # ─── 7-C. OPENING RX (v2.1) ───
+            # ─── 7-C. OPENING RX (v2.1) — SHIHO 자료, level='chris'에서는 스킵 ───
             rx = item.get('opening_rx', {})
-            if isinstance(rx, dict) and rx:
+            if level != "chris" and isinstance(rx, dict) and rx:
                 TECH_KO = {
                     "ACTION_DROP":"액션 드롭","COLD_OPEN":"콜드 오픈",
                     "TEASE_REVEAL":"티즈 앤 리빌","IN_MEDIA_RES":"인 미디어스 레스",
@@ -2155,78 +2257,81 @@ def _create_docx_fallback(item):
                 if rx.get('overall_direction'):
                     doc.add_paragraph(f"교정 전체 방향: {safe_str(rx.get('overall_direction',''))}")
 
-        # 8. 시퀀스 워싱
-        doc.add_page_break()
-        doc.add_heading("8. 시퀀스 워싱 (Washing Table)", 1)
-        for row in item.get('washing_table', []):
-            if not isinstance(row, dict): continue
-            doc.add_paragraph(f"[{safe_str(row.get('seq',''))}]  {safe_str(row.get('label',''))}")
-            wtbl = doc.add_table(rows=1, cols=2)
-            wtbl.style = 'Table Grid'
-            wtbl.rows[0].cells[0].text = f"⚠️ 진단\n{safe_str(row.get('diagnosis',''))}"
-            wtbl.rows[0].cells[1].text = f"✅ 처방\n{safe_str(row.get('prescription',''))}"
+        # 8~10 섹션은 SHIHO 자료 — level='chris'에서는 전체 스킵
+        if level != "chris":
+            # 8. 시퀀스 워싱
+            doc.add_page_break()
+            doc.add_heading("8. 시퀀스 워싱 (Washing Table)", 1)
+            for row in item.get('washing_table', []):
+                if not isinstance(row, dict): continue
+                doc.add_paragraph(f"[{safe_str(row.get('seq',''))}]  {safe_str(row.get('label',''))}")
+                wtbl = doc.add_table(rows=1, cols=2)
+                wtbl.style = 'Table Grid'
+                wtbl.rows[0].cells[0].text = f"⚠️ 진단\n{safe_str(row.get('diagnosis',''))}"
+                wtbl.rows[0].cells[1].text = f"✅ 처방\n{safe_str(row.get('prescription',''))}"
 
-        # 9. 대사 워싱
-        doc.add_heading("9. 대사 워싱 (Dialogue Washing)", 1)
-        da = item.get('dialogue_analysis', {})
-        if isinstance(da, dict) and da:
-            doc.add_paragraph(f"종합 대사 수준: {da.get('overall_score',0)} / 10")
-            ax = da.get('axis_scores', {})
-            if isinstance(ax, dict) and ax:
-                doc.add_heading("3축 점수", 2)
-                atbl = doc.add_table(rows=4, cols=3)
-                atbl.style = 'Table Grid'
-                atbl.rows[0].cells[0].text = '평가 축'
-                atbl.rows[0].cells[1].text = '기준'
-                atbl.rows[0].cells[2].text = '점수'
-                axes = [
-                    ('① 캐릭터 적합성', '고유 어휘·말투·감정 반영',   safe_int(ax.get('character_voice',0))),
-                    ('② 서브텍스트',    '표면↔이면 충돌, 설명형 금지', safe_int(ax.get('subtext',0))),
-                    ('③ 행동/감정/관계','장면 추진력, 정보전달 금지',   safe_int(ax.get('action_driven',0))),
-                ]
-                for i, (lbl, crit, val) in enumerate(axes, 1):
-                    atbl.rows[i].cells[0].text = lbl
-                    atbl.rows[i].cells[1].text = crit
-                    clamped = min(max(val, 0), 10)
-                    atbl.rows[i].cells[2].text = f"{'█'*clamped}{'░'*(10-clamped)}  {val}/10"
-            doc.add_paragraph(safe_str(da.get('overall_comment', '')))
-            for s in da.get('strengths', []):
-                doc.add_paragraph(f"💪 {safe_str(s)}")
-            issues = da.get('issues', [])
-            if isinstance(issues, list) and issues:
-                doc.add_heading("대사 4축 진단 Before / After", 2)
-                for issue in issues:
-                    if not isinstance(issue, dict): continue
-                    doc.add_paragraph(f"[{safe_str(issue.get('type',''))}]  {safe_str(issue.get('axis',''))}  {safe_str(issue.get('description',''))}")
-                    itbl = doc.add_table(rows=1, cols=2)
-                    itbl.style = 'Table Grid'
-                    itbl.rows[0].cells[0].text = f"❌ BEFORE\n{safe_str(issue.get('example_bad',''))}"
-                    itbl.rows[0].cells[1].text = f"✅ ④ 개선 제안\n{safe_str(issue.get('example_good',''))}"
-                    if issue.get('rewrite_note'):
-                        doc.add_paragraph(f"✏️ Moon 지시: {safe_str(issue.get('rewrite_note',''))}")
-        
-        # 10. 각색 제안
-        doc.add_heading("10. 각색 제안 (Action Plan)", 1)
-        for i, s in enumerate(item.get('suggestions', []), 1):
-            clean_s = re.sub(r'^[\d\.\s]+', '', safe_str(s)).strip()
-            doc.add_paragraph(f"STEP {i:02d}  {clean_s}")
+            # 9. 대사 워싱
+            doc.add_heading("9. 대사 워싱 (Dialogue Washing)", 1)
+            da = item.get('dialogue_analysis', {})
+            if isinstance(da, dict) and da:
+                doc.add_paragraph(f"종합 대사 수준: {da.get('overall_score',0)} / 10")
+                ax = da.get('axis_scores', {})
+                if isinstance(ax, dict) and ax:
+                    doc.add_heading("3축 점수", 2)
+                    atbl = doc.add_table(rows=4, cols=3)
+                    atbl.style = 'Table Grid'
+                    atbl.rows[0].cells[0].text = '평가 축'
+                    atbl.rows[0].cells[1].text = '기준'
+                    atbl.rows[0].cells[2].text = '점수'
+                    axes = [
+                        ('① 캐릭터 적합성', '고유 어휘·말투·감정 반영',   safe_int(ax.get('character_voice',0))),
+                        ('② 서브텍스트',    '표면↔이면 충돌, 설명형 금지', safe_int(ax.get('subtext',0))),
+                        ('③ 행동/감정/관계','장면 추진력, 정보전달 금지',   safe_int(ax.get('action_driven',0))),
+                    ]
+                    for i, (lbl, crit, val) in enumerate(axes, 1):
+                        atbl.rows[i].cells[0].text = lbl
+                        atbl.rows[i].cells[1].text = crit
+                        clamped = min(max(val, 0), 10)
+                        atbl.rows[i].cells[2].text = f"{'█'*clamped}{'░'*(10-clamped)}  {val}/10"
+                doc.add_paragraph(safe_str(da.get('overall_comment', '')))
+                for s in da.get('strengths', []):
+                    doc.add_paragraph(f"💪 {safe_str(s)}")
+                issues = da.get('issues', [])
+                if isinstance(issues, list) and issues:
+                    doc.add_heading("대사 4축 진단 Before / After", 2)
+                    for issue in issues:
+                        if not isinstance(issue, dict): continue
+                        doc.add_paragraph(f"[{safe_str(issue.get('type',''))}]  {safe_str(issue.get('axis',''))}  {safe_str(issue.get('description',''))}")
+                        itbl = doc.add_table(rows=1, cols=2)
+                        itbl.style = 'Table Grid'
+                        itbl.rows[0].cells[0].text = f"❌ BEFORE\n{safe_str(issue.get('example_bad',''))}"
+                        itbl.rows[0].cells[1].text = f"✅ ④ 개선 제안\n{safe_str(issue.get('example_good',''))}"
+                        if issue.get('rewrite_note'):
+                            doc.add_paragraph(f"✏️ Moon 지시: {safe_str(issue.get('rewrite_note',''))}")
 
-        # 11. 각색 원고
-        doc.add_page_break()
-        doc.add_heading("11. 각색 원고 (Rewrite Scenes)", 1)
-        rw = item.get('rewriting', {})
-        if isinstance(rw, dict):
-            if rw.get('target_reason'):
-                doc.add_paragraph(f"✏️ 각색 전략: {safe_str(rw.get('target_reason',''))}")
-            for sc in rw.get('scenes', []):
-                if not isinstance(sc, dict): continue
-                is_r = sc.get('type') == '수정씬'
-                doc.add_heading(f"{safe_str(sc.get('scene_no',''))}  [{'✏️ 수정씬' if is_r else '✨ 추가씬'}]", 2)
-                if sc.get('original'):
-                    doc.add_paragraph(f"📄 기존 씬 (BEFORE)\n{safe_str(sc.get('original',''))}")
-                content = safe_str(sc.get('content', ''))
-                content = content.replace('\\n', '\n')
-                doc.add_paragraph(f"{'✏️ 수정씬' if is_r else '✨ 추가씬'} (AFTER)\n{content}")
+            # 10. 각색 제안
+            doc.add_heading("10. 각색 제안 (Action Plan)", 1)
+            for i, s in enumerate(item.get('suggestions', []), 1):
+                clean_s = re.sub(r'^[\d\.\s]+', '', safe_str(s)).strip()
+                doc.add_paragraph(f"STEP {i:02d}  {clean_s}")
+
+        # 11. 각색 원고 — MOON 자료, level이 'full'일 때만
+        if level == "full":
+            doc.add_page_break()
+            doc.add_heading("11. 각색 원고 (Rewrite Scenes)", 1)
+            rw = item.get('rewriting', {})
+            if isinstance(rw, dict):
+                if rw.get('target_reason'):
+                    doc.add_paragraph(f"✏️ 각색 전략: {safe_str(rw.get('target_reason',''))}")
+                for sc in rw.get('scenes', []):
+                    if not isinstance(sc, dict): continue
+                    is_r = sc.get('type') == '수정씬'
+                    doc.add_heading(f"{safe_str(sc.get('scene_no',''))}  [{'✏️ 수정씬' if is_r else '✨ 추가씬'}]", 2)
+                    if sc.get('original'):
+                        doc.add_paragraph(f"📄 기존 씬 (BEFORE)\n{safe_str(sc.get('original',''))}")
+                    content = safe_str(sc.get('content', ''))
+                    content = content.replace('\\n', '\n')
+                    doc.add_paragraph(f"{'✏️ 수정씬' if is_r else '✨ 추가씬'} (AFTER)\n{content}")
 
         buf = io.BytesIO()
         doc.save(buf)
@@ -2403,6 +2508,30 @@ def show_workspace():
                chris_st, "chris", "🔍 Chris 분석 시작", do_chris,
                render_analysis, st.session_state.analysis)
 
+    # CHRIS 완료 시 분석 리포트 즉시 다운로드 (세션 캐시)
+    if st.session_state.analysis:
+        title = re.sub(r'[/*?:"<>|]', '_', st.session_state.analysis.get('title', '제목없음'))
+        cache_key = '_docx_chris_cache'
+        cache_id_key = '_docx_chris_id'
+        current_id = id(st.session_state.analysis)
+        try:
+            if st.session_state.get(cache_id_key) != current_id:
+                st.session_state[cache_key] = create_docx(st.session_state.analysis, level="chris")
+                st.session_state[cache_id_key] = current_id
+            docx_chris = st.session_state.get(cache_key)
+            if docx_chris:
+                st.download_button(
+                    "📄 CHRIS 분석 리포트 다운로드 (DOCX)",
+                    data=docx_chris,
+                    file_name=f"시나리오분석_{title}_CHRIS.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    key="btn_download_chris",
+                    use_container_width=True,
+                    help="CHRIS 분석만 담긴 리포트 (섹션 1~8-B) — 초기 스크리닝/투자 검토용"
+                )
+        except Exception as e:
+            st.caption(f"⚠️ CHRIS 리포트 생성 지연: {type(e).__name__}")
+
     if not st.session_state.analysis:
         agent_card("🧹", "SHIHO", "Script Doctor",
                    "시퀀스 워싱 · 문제 유형 진단 · 처방 + Risk · 각색 제안 10가지",
@@ -2428,6 +2557,39 @@ def show_workspace():
                "시퀀스 워싱 · 문제 유형 진단 · 처방 + Risk · 각색 제안 10가지",
                shiho_st, "shiho", "🧹 Shiho 워싱 시작", do_shiho,
                render_washing, st.session_state.washing)
+
+    # SHIHO 완료 시 진단·처방 리포트 즉시 다운로드 (세션 캐시)
+    if st.session_state.washing:
+        # analysis + washing 병합본 생성 (CHRIS 결과 + SHIHO 결과)
+        merged_shiho = {
+            **st.session_state.analysis,
+            'washing_table':      st.session_state.washing.get('washing_table', []),
+            'dialogue_analysis':  st.session_state.washing.get('dialogue_analysis', {}),
+            'suggestions':        st.session_state.washing.get('suggestions', []),
+            'opening_rx':         st.session_state.washing.get('opening_rx', {}),
+            'genre_fun_recovery': st.session_state.washing.get('genre_fun_recovery', {})
+        }
+        title = re.sub(r'[/*?:"<>|]', '_', merged_shiho.get('title', '제목없음'))
+        cache_key = '_docx_shiho_cache'
+        cache_id_key = '_docx_shiho_id'
+        current_id = id(st.session_state.washing)
+        try:
+            if st.session_state.get(cache_id_key) != current_id:
+                st.session_state[cache_key] = create_docx(merged_shiho, level="shiho")
+                st.session_state[cache_id_key] = current_id
+            docx_shiho = st.session_state.get(cache_key)
+            if docx_shiho:
+                st.download_button(
+                    "📄 진단·처방 리포트 다운로드 (DOCX)",
+                    data=docx_shiho,
+                    file_name=f"시나리오진단처방_{title}_CHRIS+SHIHO.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    key="btn_download_shiho",
+                    use_container_width=True,
+                    help="CHRIS 분석 + SHIHO 진단·처방 (섹션 1~11, MOON 원고 제외) — 작가 피드백·다음 엔진 입력용"
+                )
+        except Exception as e:
+            st.caption(f"⚠️ SHIHO 리포트 생성 지연: {type(e).__name__}")
 
     if not st.session_state.washing:
         agent_card("✍️", "MOON", "Senior Screenwriter",
@@ -2472,14 +2634,15 @@ def show_workspace():
         with c1:
             title = re.sub(r'[/*?:"<>|]', '_', item.get('title', '제목없음'))
             try:
-                docx_bytes = create_docx(item)
+                docx_bytes = create_docx(item, level="full")
                 st.download_button(
-                    "📄 보고서 다운로드 (DOCX)",
+                    "📄 최종 통합 보고서 다운로드 (DOCX)",
                     data=docx_bytes,
-                    file_name=f"시나리오검토보고서_{title}_Blue.docx",
+                    file_name=f"시나리오최종보고서_{title}_Blue.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     key="btn_download_docx",
-                    use_container_width=True
+                    use_container_width=True,
+                    help="CHRIS 분석 + SHIHO 진단 + MOON 리라이트 원고 (섹션 1~12) — 최종 전달물"
                 )
             except Exception as e:
                 st.error(f"DOCX 생성 오류: {e}")
@@ -2491,6 +2654,9 @@ def show_workspace():
             if st.button("🔄 새 시나리오 분석", key="btn_new_analysis", use_container_width=True):
                 for k in ['step', 'raw_text', 'analysis', 'washing', 'rewriting', 'selected_item']:
                     st.session_state[k] = 0 if k == 'step' else None
+                # DOCX 세션 캐시 무효화
+                for k in ['_docx_chris_cache', '_docx_chris_id', '_docx_shiho_cache', '_docx_shiho_id']:
+                    st.session_state.pop(k, None)
                 st.rerun()
 
 # =================================================================
@@ -2509,6 +2675,9 @@ def show_index():
         if st.button("+ 새 시나리오 분석하기", use_container_width=True):
             for k in ['step', 'raw_text', 'analysis', 'washing', 'rewriting']:
                 st.session_state[k] = 0 if k == 'step' else None
+            # DOCX 세션 캐시 무효화
+            for k in ['_docx_chris_cache', '_docx_chris_id', '_docx_shiho_cache', '_docx_shiho_id']:
+                st.session_state.pop(k, None)
             st.session_state.page = "workspace"
             st.rerun()
 
