@@ -1,3 +1,15 @@
+// =================================================================
+// 👖 BLUE JEANS REWRITE ENGINE v2.2
+// gen_docx.js — DOCX 보고서 생성 (Node.js + docx-js)
+// =================================================================
+// © 2026 BLUE JEANS PICTURES. All rights reserved.
+//
+// 지원 level: 'chris' | 'shiho' | 'full'
+// - chris: 섹션 1~8-B (CHRIS 분석 리포트)
+// - shiho: 섹션 1~11 (CHRIS + SHIHO, MOON 제외)
+// - full : 섹션 1~12 (전체 통합 보고서)
+// =================================================================
+
 const {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
   Header, AlignmentType, BorderStyle, WidthType, ShadingType,
@@ -449,7 +461,7 @@ if (genre.doctoring) {
 }
 children.push(divider());
 
-// ━━ 8-B. OPENING MASTERY (v2.1 신규) ━━
+// ━━ 8-B. OPENING MASTERY (v2.2) ━━
 const om = genre.opening_mastery || {};
 if (om && Object.keys(om).length > 0) {
   const TECHNIQUE_KO = {
@@ -574,7 +586,7 @@ if (om && Object.keys(om).length > 0) {
   children.push(divider());
 }
 
-// ━━ 8-C. OPENING RX — SHIHO 교정 처방 (v2.1 신규) ━━
+// ━━ 8-C. OPENING RX — SHIHO 교정 처방 (v2.2) ━━
 const rx = wa.opening_rx || {};
 if (showShiho && rx && Object.keys(rx).length > 0) {
   const TECHNIQUE_KO = {
