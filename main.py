@@ -1,18 +1,3 @@
-# =================================================================
-# 👖 BLUE JEANS REWRITE ENGINE v2.2
-# main.py — Streamlit 웹앱 (CHRIS / SHIHO / MOON 3-agent 파이프라인)
-# =================================================================
-# © 2026 BLUE JEANS PICTURES. All rights reserved.
-#
-# v2.2 주요 기능:
-# - 3-agent 파이프라인 (CHRIS 분석 → SHIHO 진단·처방 → MOON 리라이트)
-# - OPENING MASTERY 모듈 (6기법 + 장르 DNA 8종 + 도파민 6감각)
-# - 3단계 다운로드 (각 에이전트 완료 시점별 DOCX)
-#   · CHRIS 분석 리포트 (섹션 1~8-B)
-#   · 진단·처방 리포트 (섹션 1~11, MOON 제외)
-#   · 최종 통합 보고서 (섹션 1~12, 전체)
-# =================================================================
-
 import streamlit as st
 import anthropic
 from PyPDF2 import PdfReader
@@ -1357,7 +1342,7 @@ def render_analysis(data):
         </div>""", unsafe_allow_html=True)
 
     # ═══════════════════════════════════════════════════════════════
-    # 8-B. OPENING MASTERY (v2.2)
+    # 8-B. OPENING MASTERY (v2.1 신규)
     # ═══════════════════════════════════════════════════════════════
     om = genre.get('opening_mastery', {})
     if om and isinstance(om, dict):
@@ -1550,7 +1535,7 @@ def render_analysis(data):
 
 def render_washing(data):
     # ═══════════════════════════════════════════════════════════════
-    # 8-C. OPENING RX — SHIHO의 오프닝 교정 처방 (v2.2)
+    # 8-C. OPENING RX — SHIHO의 오프닝 교정 처방 (v2.1 신규)
     # ═══════════════════════════════════════════════════════════════
     rx = data.get('opening_rx', {})
     if rx and isinstance(rx, dict):
@@ -1934,6 +1919,88 @@ def render_rewriting(data):
 
 
 # =================================================================
+# [7-B] JSON 익스포트 — Revise Engine 연동용 (v2.2 신규)
+# =================================================================
+def export_diagnosis_json(item, level="shiho"):
+    """진단·처방 데이터를 JSON으로 직렬화.
+    
+    Revise Engine 등 외부 엔진이 파싱하기 쉽도록 chris/shiho 네임스페이스로 분리.
+    
+    level:
+      'chris' : CHRIS 분석만
+      'shiho' : CHRIS + SHIHO (기본값, Revise Engine 표준 입력)
+      'full'  : CHRIS + SHIHO + MOON
+    
+    반환: bytes (UTF-8 인코딩된 JSON, 사람이 읽기 좋게 들여쓰기 적용)
+    """
+    from datetime import datetime
+    
+    # 장르 정보 추출
+    genre_info = item.get('genre', {})
+    if isinstance(genre_info, dict):
+        genre_str = genre_info.get('primary', '')
+        if genre_info.get('tags'):
+            tags = genre_info.get('tags', [])
+            if isinstance(tags, list) and tags:
+                genre_str = f"{genre_str} ({', '.join(tags)})"
+    else:
+        genre_str = str(genre_info)
+    
+    # CHRIS 데이터 (분석)
+    chris_data = {
+        "scores":           item.get('scores', {}),
+        "mark":             item.get('mark', {}),
+        "verdict":          item.get('verdict', {}),
+        "logline":          item.get('logline', {}),
+        "synopsis":         item.get('synopsis', ''),
+        "pros_cons":        item.get('pros_cons', {}),
+        "drive":            item.get('drive', {}),
+        "characters":       item.get('characters', {}),
+        "beats":            item.get('beats', {}),
+        "tension_data":     item.get('tension_data', []),
+        "genre_compliance": item.get('genre_compliance', {}),
+    }
+    
+    # SHIHO 데이터 (진단·처방) — level이 shiho 또는 full일 때만
+    shiho_data = None
+    if level in ("shiho", "full"):
+        shiho_data = {
+            "washing_table":      item.get('washing_table', []),
+            "dialogue_analysis":  item.get('dialogue_analysis', {}),
+            "suggestions":        item.get('suggestions', []),
+            "opening_rx":         item.get('opening_rx', {}),
+            "genre_fun_recovery": item.get('genre_fun_recovery', {}),
+        }
+    
+    # MOON 데이터 (리라이트 원고) — level이 full일 때만
+    moon_data = None
+    if level == "full":
+        moon_data = item.get('rewriting', {})
+    
+    # 최종 페이로드
+    payload = {
+        "meta": {
+            "engine":         "rewrite-engine",
+            "version":        "2.2",
+            "export_level":   level,
+            "exported_at":    datetime.now().isoformat(),
+            "title":          item.get('title', ''),
+            "genre":          genre_str,
+            "genre_key":      item.get('genre_compliance', {}).get('genre_key', ''),
+            "schema_note":    "Revise Engine 등 외부 엔진 파싱용. chris/shiho/moon 네임스페이스로 분리.",
+        },
+        "chris": chris_data,
+    }
+    if shiho_data is not None:
+        payload["shiho"] = shiho_data
+    if moon_data is not None:
+        payload["moon"] = moon_data
+    
+    json_str = json.dumps(payload, ensure_ascii=False, indent=2)
+    return json_str.encode('utf-8')
+
+
+# =================================================================
 # [8] DOCX 생성
 # =================================================================
 def create_docx(item, level="full"):
@@ -2195,7 +2262,7 @@ def _create_docx_fallback(item, level="full"):
             if genre.get('doctoring'):
                 doc.add_paragraph(safe_str(genre.get('doctoring', '')))
 
-            # ─── 7-B. OPENING MASTERY (v2.2) ───
+            # ─── 7-B. OPENING MASTERY (v2.1) ───
             om = genre.get('opening_mastery', {})
             if isinstance(om, dict) and om:
                 TECH_KO = {
@@ -2239,7 +2306,7 @@ def _create_docx_fallback(item, level="full"):
                 if om.get('opening_diagnosis'):
                     doc.add_paragraph(f"오프닝 종합 진단: {safe_str(om.get('opening_diagnosis',''))}")
 
-            # ─── 7-C. OPENING RX (v2.2) — SHIHO 자료, level='chris'에서는 스킵 ───
+            # ─── 7-C. OPENING RX (v2.1) — SHIHO 자료, level='chris'에서는 스킵 ───
             rx = item.get('opening_rx', {})
             if level != "chris" and isinstance(rx, dict) and rx:
                 TECH_KO = {
@@ -2585,26 +2652,54 @@ def show_workspace():
             'genre_fun_recovery': st.session_state.washing.get('genre_fun_recovery', {})
         }
         title = re.sub(r'[/*?:"<>|]', '_', merged_shiho.get('title', '제목없음'))
-        cache_key = '_docx_shiho_cache'
-        cache_id_key = '_docx_shiho_id'
         current_id = id(st.session_state.washing)
-        try:
-            if st.session_state.get(cache_id_key) != current_id:
-                st.session_state[cache_key] = create_docx(merged_shiho, level="shiho")
-                st.session_state[cache_id_key] = current_id
-            docx_shiho = st.session_state.get(cache_key)
-            if docx_shiho:
-                st.download_button(
-                    "📄 진단·처방 리포트 다운로드 (DOCX)",
-                    data=docx_shiho,
-                    file_name=f"시나리오진단처방_{title}_CHRIS+SHIHO.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    key="btn_download_shiho",
-                    use_container_width=True,
-                    help="CHRIS 분석 + SHIHO 진단·처방 (섹션 1~11, MOON 원고 제외) — 작가 피드백·다음 엔진 입력용"
-                )
-        except Exception as e:
-            st.caption(f"⚠️ SHIHO 리포트 생성 지연: {type(e).__name__}")
+
+        # ── DOCX + JSON 두 가지 다운로드를 2-column으로 ──
+        d_col1, d_col2 = st.columns(2)
+
+        # DOCX (사람용 보고서)
+        with d_col1:
+            cache_key = '_docx_shiho_cache'
+            cache_id_key = '_docx_shiho_id'
+            try:
+                if st.session_state.get(cache_id_key) != current_id:
+                    st.session_state[cache_key] = create_docx(merged_shiho, level="shiho")
+                    st.session_state[cache_id_key] = current_id
+                docx_shiho = st.session_state.get(cache_key)
+                if docx_shiho:
+                    st.download_button(
+                        "📄 진단·처방 리포트 (DOCX)",
+                        data=docx_shiho,
+                        file_name=f"시나리오진단처방_{title}_CHRIS+SHIHO.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        key="btn_download_shiho_docx",
+                        use_container_width=True,
+                        help="사람이 읽는 형태의 보고서 — 작가 피드백·검토용"
+                    )
+            except Exception as e:
+                st.caption(f"⚠️ DOCX 생성 지연: {type(e).__name__}")
+
+        # JSON (Revise Engine 등 외부 엔진 입력용)
+        with d_col2:
+            json_cache_key = '_json_shiho_cache'
+            json_cache_id_key = '_json_shiho_id'
+            try:
+                if st.session_state.get(json_cache_id_key) != current_id:
+                    st.session_state[json_cache_key] = export_diagnosis_json(merged_shiho, level="shiho")
+                    st.session_state[json_cache_id_key] = current_id
+                json_shiho = st.session_state.get(json_cache_key)
+                if json_shiho:
+                    st.download_button(
+                        "📋 진단·처방 데이터 (JSON)",
+                        data=json_shiho,
+                        file_name=f"진단처방_{title}_CHRIS+SHIHO.json",
+                        mime="application/json",
+                        key="btn_download_shiho_json",
+                        use_container_width=True,
+                        help="Revise Engine 등 외부 엔진 입력용 — chris/shiho 네임스페이스로 분리된 JSON"
+                    )
+            except Exception as e:
+                st.caption(f"⚠️ JSON 생성 지연: {type(e).__name__}")
 
     if not st.session_state.washing:
         agent_card("✍️", "MOON", "Senior Screenwriter",
@@ -2670,7 +2765,7 @@ def show_workspace():
                 for k in ['step', 'raw_text', 'analysis', 'washing', 'rewriting', 'selected_item']:
                     st.session_state[k] = 0 if k == 'step' else None
                 # DOCX 세션 캐시 무효화
-                for k in ['_docx_chris_cache', '_docx_chris_id', '_docx_shiho_cache', '_docx_shiho_id']:
+                for k in ['_docx_chris_cache', '_docx_chris_id', '_docx_shiho_cache', '_docx_shiho_id', '_json_shiho_cache', '_json_shiho_id']:
                     st.session_state.pop(k, None)
                 st.rerun()
 
@@ -2691,7 +2786,7 @@ def show_index():
             for k in ['step', 'raw_text', 'analysis', 'washing', 'rewriting']:
                 st.session_state[k] = 0 if k == 'step' else None
             # DOCX 세션 캐시 무효화
-            for k in ['_docx_chris_cache', '_docx_chris_id', '_docx_shiho_cache', '_docx_shiho_id']:
+            for k in ['_docx_chris_cache', '_docx_chris_id', '_docx_shiho_cache', '_docx_shiho_id', '_json_shiho_cache', '_json_shiho_id']:
                 st.session_state.pop(k, None)
             st.session_state.page = "workspace"
             st.rerun()
