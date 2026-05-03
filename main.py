@@ -1922,20 +1922,29 @@ def render_rewriting(data):
 # [7-B] JSON 익스포트 — Revise Engine 연동용 (v2.2 신규)
 # =================================================================
 def export_diagnosis_json(item, level="shiho"):
-    """진단·처방 데이터를 JSON으로 직렬화.
+    """진단·처방 데이터를 JSON으로 직렬화 — Revise Engine v2.3 호환.
     
-    Revise Engine 등 외부 엔진이 파싱하기 쉽도록 chris/shiho 네임스페이스로 분리.
+    출력 구조 (이중 트랙):
+      [A] Revise 자동 흡수 키:
+          - rewrite_suggestions: SHIHO 휴리스틱 파싱 또는 MOON scenes 기반
+          - add_suggestions:     SHIHO 휴리스틱 파싱 또는 MOON scenes 기반
+          - weak_zone_scenes:    SHIHO genre_fun_recovery 평면화
+          - moon_opinion_text 등: MOON 시점에만, 평면 키
+      
+      [B] 원본 데이터 보존 (참고/검증용):
+          - chris_analysis:     CHRIS 분석 전체
+          - shiho_prescription: SHIHO 진단/처방 전체 (washing_table, suggestions, opening_rx 등)
+          - moon_rewrite:       MOON 결과 (level='full'일 때만)
     
     level:
-      'chris' : CHRIS 분석만
-      'shiho' : CHRIS + SHIHO (기본값, Revise Engine 표준 입력)
-      'full'  : CHRIS + SHIHO + MOON
-    
-    반환: bytes (UTF-8 인코딩된 JSON, 사람이 읽기 좋게 들여쓰기 적용)
+      'chris' : CHRIS 분석만 (검토용)
+      'shiho' : CHRIS + SHIHO (Revise 입력용 표준)
+      'full'  : CHRIS + SHIHO + MOON (Revise 입력용 완전판)
     """
     from datetime import datetime
-    
-    # 장르 정보 추출
+    import re as _re
+
+    # ── 장르 정보 ──
     genre_info = item.get('genre', {})
     if isinstance(genre_info, dict):
         genre_str = genre_info.get('primary', '')
@@ -1946,25 +1955,150 @@ def export_diagnosis_json(item, level="shiho"):
     else:
         genre_str = str(genre_info)
     
-    # CHRIS 데이터 (분석)
-    chris_data = {
-        "scores":           item.get('scores', {}),
-        "mark":             item.get('mark', {}),
-        "verdict":          item.get('verdict', {}),
-        "logline":          item.get('logline', {}),
-        "synopsis":         item.get('synopsis', ''),
-        "pros_cons":        item.get('pros_cons', {}),
-        "drive":            item.get('drive', {}),
-        "characters":       item.get('characters', {}),
-        "beats":            item.get('beats', {}),
-        "tension_data":     item.get('tension_data', []),
-        "genre_compliance": item.get('genre_compliance', {}),
+    # ─────────────────────────────────────────────────────────
+    # [A] Revise 자동 흡수용 평면 키 조립
+    # ─────────────────────────────────────────────────────────
+    rewrite_suggestions = []
+    add_suggestions = []
+    weak_zone_scenes = []
+    moon_opinion_text = ""
+    moon_market_direction = ""
+    moon_genre_strengthening = ""
+    moon_unique_value = ""
+
+    # ── rewrite_suggestions / add_suggestions: MOON 우선, 없으면 SHIHO 휴리스틱 ──
+    rewriting = item.get('rewriting', {}) if level == "full" else {}
+    moon_scenes = rewriting.get('scenes', []) if isinstance(rewriting, dict) else []
+    
+    if level == "full" and moon_scenes:
+        # MOON 결과로 정확히 매핑
+        for sc in moon_scenes:
+            if not isinstance(sc, dict):
+                continue
+            scene_no = str(sc.get('scene_no', ''))
+            scene_type = sc.get('type', '')
+            content = sc.get('content', '')
+            
+            # scene_no 에서 첫 번째 S#숫자 패턴 추출
+            m = _re.search(r'S#\s*(\d+)', scene_no)
+            scene_id = f"S#{m.group(1)}" if m else scene_no
+            
+            if scene_type == '추가씬':
+                # "S#X와 S#Y 사이" 또는 "S#X-신규" 패턴 → insert_after 추출
+                # 또는 scene_no 자체에 들어있는 첫 숫자 사용
+                insert_after = scene_id
+                m_after = _re.search(r'S#(\d+)\s*(?:와|이후|다음|뒤)', scene_no)
+                if m_after:
+                    insert_after = f"S#{m_after.group(1)}"
+                add_suggestions.append({
+                    "scene_id": scene_no,
+                    "insert_after": insert_after,
+                    "type": "추가씬",
+                    "content_plan": content[:500] if content else "",
+                    "why": sc.get('reason', '') or rewriting.get('target_reason', ''),
+                    "function": sc.get('function', ''),
+                })
+            else:  # 수정씬
+                rewrite_suggestions.append({
+                    "scene_id": scene_id,
+                    "what_to_change": content[:500] if content else "",
+                    "why": sc.get('reason', '') or rewriting.get('target_reason', ''),
+                    "preserve": [],
+                    "type": "REWRITE",
+                    "before": sc.get('original', ''),
+                })
+    else:
+        # SHIHO 휴리스틱 파싱 (suggestions[] 텍스트 → REWRITE/ADD 분류)
+        ADD_KEYWORDS = ['추가', '신설', '삽입', '인서트', '신규', '새로운', '집어넣', '넣는다']
+        MERGE_KEYWORDS = ['병합', '합치', '통합', '한 씬으로', '한씬으로', '합쳐']
+        DELETE_KEYWORDS = ['삭제', '제거', '빼라', '뺀다']
+        
+        for s in item.get('suggestions', []):
+            if not isinstance(s, str):
+                continue
+            text = s.strip()
+            if not text:
+                continue
+            # 앞의 번호 제거 ("1. ...", "STEP 01 ..." 등)
+            cleaned = _re.sub(r'^(?:STEP\s*)?\d+[\.\)\s]+', '', text).strip()
+            
+            # scene_id 추출 (첫 번째 S#숫자)
+            m = _re.search(r'S\s*#\s*(\d+)', cleaned)
+            scene_id = f"S#{m.group(1)}" if m else ""
+            
+            # 분류
+            is_add = any(kw in cleaned for kw in ADD_KEYWORDS)
+            is_merge = any(kw in cleaned for kw in MERGE_KEYWORDS)
+            
+            if is_add and not is_merge:
+                # 추가 씬 — insert_after는 첫 S#숫자 사용
+                add_suggestions.append({
+                    "scene_id": f"(NEW) {scene_id}" if scene_id else "(NEW)",
+                    "insert_after": scene_id,
+                    "type": "추가 시퀀스",
+                    "content_plan": cleaned,
+                    "why": "",
+                    "_source": "shiho_heuristic",
+                })
+            else:
+                rewrite_suggestions.append({
+                    "scene_id": scene_id,
+                    "what_to_change": cleaned,
+                    "why": "",
+                    "preserve": [],
+                    "type": "MERGE" if is_merge else "REWRITE",
+                    "_source": "shiho_heuristic",
+                })
+
+    # ── weak_zone_scenes: SHIHO genre_fun_recovery.weak_zones 평면화 ──
+    gfr = item.get('genre_fun_recovery', {}) if isinstance(item.get('genre_fun_recovery'), dict) else {}
+    for wz in gfr.get('weak_zones', []):
+        if not isinstance(wz, dict):
+            continue
+        weak_zone_scenes.append({
+            "seq_ref": wz.get('seq_ref', ''),
+            "issue": wz.get('what_is_missing', ''),
+            "hook_suggestion": wz.get('hook_suggestion', ''),
+            "punch_suggestion": wz.get('punch_suggestion', ''),
+        })
+
+    # ── moon_opinion 평면 키들 (MOON 시점에만) ──
+    if level == "full":
+        target_reason = rewriting.get('target_reason', '') if isinstance(rewriting, dict) else ''
+        verdict_rationale = item.get('verdict', {}).get('rationale', '') if isinstance(item.get('verdict'), dict) else ''
+        gfr_direction = gfr.get('overall_direction', '')
+        opening_rx = item.get('opening_rx', {})
+        opening_direction = opening_rx.get('overall_direction', '') if isinstance(opening_rx, dict) else ''
+
+        # 전체 의견: target_reason 우선, 없으면 verdict_rationale
+        moon_opinion_text = target_reason or verdict_rationale
+        # 시장 방향: verdict_rationale (CHRIS의 상업적 판단 부분)
+        moon_market_direction = verdict_rationale
+        # 장르 강화: SHIHO genre_fun_recovery
+        moon_genre_strengthening = gfr_direction
+        # 차별성/오프닝 방향: SHIHO opening_rx
+        moon_unique_value = opening_direction
+
+    # ─────────────────────────────────────────────────────────
+    # [B] 원본 데이터 보존 (참고/검증용)
+    # ─────────────────────────────────────────────────────────
+    chris_analysis = {
+        "scores":            item.get('scores', {}),
+        "mark":              item.get('mark', {}),
+        "verdict":           item.get('verdict', {}),
+        "logline":           item.get('logline', {}),
+        "synopsis":          item.get('synopsis', ''),
+        "pros_cons":         item.get('pros_cons', {}),
+        "drive":             item.get('drive', {}),
+        "characters":        item.get('characters', {}),
+        "beats":             item.get('beats', {}),
+        "tension_data":      item.get('tension_data', []),
+        "genre_compliance":  item.get('genre_compliance', {}),
     }
     
-    # SHIHO 데이터 (진단·처방) — level이 shiho 또는 full일 때만
-    shiho_data = None
+    shiho_prescription = None
     if level in ("shiho", "full"):
-        shiho_data = {
+        shiho_prescription = {
             "washing_table":      item.get('washing_table', []),
             "dialogue_analysis":  item.get('dialogue_analysis', {}),
             "suggestions":        item.get('suggestions', []),
@@ -1972,29 +2106,50 @@ def export_diagnosis_json(item, level="shiho"):
             "genre_fun_recovery": item.get('genre_fun_recovery', {}),
         }
     
-    # MOON 데이터 (리라이트 원고) — level이 full일 때만
-    moon_data = None
+    moon_rewrite = None
     if level == "full":
-        moon_data = item.get('rewriting', {})
-    
-    # 최종 페이로드
+        moon_rewrite = item.get('rewriting', {})
+
+    # ─────────────────────────────────────────────────────────
+    # 최종 페이로드 — A(Revise 흡수) + B(원본) 동시 수록
+    # ─────────────────────────────────────────────────────────
     payload = {
-        "meta": {
-            "engine":         "rewrite-engine",
-            "version":        "2.2",
-            "export_level":   level,
-            "exported_at":    datetime.now().isoformat(),
-            "title":          item.get('title', ''),
-            "genre":          genre_str,
-            "genre_key":      item.get('genre_compliance', {}).get('genre_key', ''),
-            "schema_note":    "Revise Engine 등 외부 엔진 파싱용. chris/shiho/moon 네임스페이스로 분리.",
-        },
-        "chris": chris_data,
+        # ── 메타 정보 ──
+        "title":            item.get('title', ''),
+        "report_date":      datetime.now().strftime('%Y-%m-%d'),
+        "engine_version":   "Rewrite Engine v2.2",
+        "schema_version":   "1.0",
+        
+        # ── [A] Revise Engine v2.3 자동 흡수 키 (평면) ──
+        "rewrite_suggestions": rewrite_suggestions,
+        "add_suggestions":     add_suggestions,
+        "weak_zone_scenes":    weak_zone_scenes,
+        "moon_opinion_text":          moon_opinion_text,
+        "moon_market_direction":      moon_market_direction,
+        "moon_genre_strengthening":   moon_genre_strengthening,
+        "moon_unique_value":          moon_unique_value,
+        
+        # ── [B] 원본 데이터 보존 (사용자 검증·참고용) ──
+        "chris_analysis":     chris_analysis,
     }
-    if shiho_data is not None:
-        payload["shiho"] = shiho_data
-    if moon_data is not None:
-        payload["moon"] = moon_data
+    if shiho_prescription is not None:
+        payload["shiho_prescription"] = shiho_prescription
+    if moon_rewrite is not None:
+        payload["moon_rewrite"] = moon_rewrite
+
+    # ── 메타데이터 (Revise Engine 호환) ──
+    payload["metadata"] = {
+        "engine":             "rewrite-engine",
+        "export_level":       level,
+        "exported_at":        datetime.now().isoformat(),
+        "genre":              genre_str,
+        "genre_key":          item.get('genre_compliance', {}).get('genre_key', ''),
+        "rewrite_count":      len(rewrite_suggestions),
+        "add_count":          len(add_suggestions),
+        "weak_zone_count":    len(weak_zone_scenes),
+        "rewrite_source":     "moon_scenes" if (level == "full" and moon_scenes) else ("shiho_heuristic" if rewrite_suggestions else "none"),
+        "schema_note":        "Revise Engine v2.3 자동 흡수 키 + 원본 데이터 동시 수록. 평면 키는 absorb_rewrite_engine_metadata()용.",
+    }
     
     json_str = json.dumps(payload, ensure_ascii=False, indent=2)
     return json_str.encode('utf-8')
@@ -2690,13 +2845,13 @@ def show_workspace():
                 json_shiho = st.session_state.get(json_cache_key)
                 if json_shiho:
                     st.download_button(
-                        "📋 진단·처방 데이터 (JSON)",
+                        "📋 Revise 입력 데이터 (JSON · SHIHO 시점)",
                         data=json_shiho,
-                        file_name=f"진단처방_{title}_CHRIS+SHIHO.json",
+                        file_name=f"revise_input_{title}_SHIHO.json",
                         mime="application/json",
                         key="btn_download_shiho_json",
                         use_container_width=True,
-                        help="Revise Engine 등 외부 엔진 입력용 — chris/shiho 네임스페이스로 분리된 JSON"
+                        help="Revise Engine v2.3 자동 흡수용 — SHIHO 워싱 제안을 휴리스틱 분류한 결과 + 원본 데이터 동시 수록. Revise에서 검토·수정 가능."
                     )
             except Exception as e:
                 st.caption(f"⚠️ JSON 생성 지연: {type(e).__name__}")
@@ -2740,13 +2895,17 @@ def show_workspace():
         st.markdown('<hr>', unsafe_allow_html=True)
         st.markdown('<div style="text-align:center;padding:16px 0;"><span style="font-size:1.4rem;font-weight:900;color:#2EC484;">🎉 모든 분석 완료!</span></div>', unsafe_allow_html=True)
         item = st.session_state.selected_item
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            title = re.sub(r'[/*?:"<>|]', '_', item.get('title', '제목없음'))
+        title = re.sub(r'[/*?:"<>|]', '_', item.get('title', '제목없음'))
+
+        # ── 다운로드 버튼 행: DOCX + JSON 2개 ──
+        d_col1, d_col2 = st.columns(2)
+
+        # DOCX (최종 통합 보고서)
+        with d_col1:
             try:
                 docx_bytes = create_docx(item, level="full")
                 st.download_button(
-                    "📄 최종 통합 보고서 다운로드 (DOCX)",
+                    "📄 최종 통합 보고서 (DOCX)",
                     data=docx_bytes,
                     file_name=f"시나리오최종보고서_{title}_Blue.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -2756,16 +2915,45 @@ def show_workspace():
                 )
             except Exception as e:
                 st.error(f"DOCX 생성 오류: {e}")
-        with c2:
+
+        # JSON (Revise Engine 입력용 — 완전판)
+        with d_col2:
+            json_full_cache_key = '_json_full_cache'
+            json_full_cache_id_key = '_json_full_id'
+            current_full_id = id(item)
+            try:
+                if st.session_state.get(json_full_cache_id_key) != current_full_id:
+                    st.session_state[json_full_cache_key] = export_diagnosis_json(item, level="full")
+                    st.session_state[json_full_cache_id_key] = current_full_id
+                json_full = st.session_state.get(json_full_cache_key)
+                if json_full:
+                    st.download_button(
+                        "📋 Revise 입력 데이터 (JSON · 완전판)",
+                        data=json_full,
+                        file_name=f"revise_input_{title}_FULL.json",
+                        mime="application/json",
+                        key="btn_download_full_json",
+                        use_container_width=True,
+                        help="MOON 결과 포함 — Revise Engine 자동 흡수용 (rewrite_suggestions / add_suggestions 정확)"
+                    )
+            except Exception as e:
+                st.caption(f"⚠️ JSON 생성 지연: {type(e).__name__}")
+
+        # ── 네비게이션 행 ──
+        n_col1, n_col2 = st.columns(2)
+        with n_col1:
             if st.button("🏠 목록으로 돌아가기", key="btn_to_index", use_container_width=True):
                 st.session_state.page = "index"
                 st.rerun()
-        with c3:
+        with n_col2:
             if st.button("🔄 새 시나리오 분석", key="btn_new_analysis", use_container_width=True):
                 for k in ['step', 'raw_text', 'analysis', 'washing', 'rewriting', 'selected_item']:
                     st.session_state[k] = 0 if k == 'step' else None
-                # DOCX 세션 캐시 무효화
-                for k in ['_docx_chris_cache', '_docx_chris_id', '_docx_shiho_cache', '_docx_shiho_id', '_json_shiho_cache', '_json_shiho_id']:
+                # DOCX·JSON 세션 캐시 무효화
+                for k in ['_docx_chris_cache', '_docx_chris_id',
+                          '_docx_shiho_cache', '_docx_shiho_id',
+                          '_json_shiho_cache', '_json_shiho_id',
+                          '_json_full_cache', '_json_full_id']:
                     st.session_state.pop(k, None)
                 st.rerun()
 
@@ -2786,7 +2974,7 @@ def show_index():
             for k in ['step', 'raw_text', 'analysis', 'washing', 'rewriting']:
                 st.session_state[k] = 0 if k == 'step' else None
             # DOCX 세션 캐시 무효화
-            for k in ['_docx_chris_cache', '_docx_chris_id', '_docx_shiho_cache', '_docx_shiho_id', '_json_shiho_cache', '_json_shiho_id']:
+            for k in ['_docx_chris_cache', '_docx_chris_id', '_docx_shiho_cache', '_docx_shiho_id', '_json_shiho_cache', '_json_shiho_id', '_json_full_cache', '_json_full_id']:
                 st.session_state.pop(k, None)
             st.session_state.page = "workspace"
             st.rerun()
