@@ -2847,7 +2847,7 @@ def show_workspace():
                     st.download_button(
                         "📋 Revise 입력 데이터 (JSON · SHIHO 시점)",
                         data=json_shiho,
-                        file_name=f"revise_input_{title}_SHIHO.json",
+                        file_name=f"시나리오진단처방_{title}_CHRIS+SHIHO.json",
                         mime="application/json",
                         key="btn_download_shiho_json",
                         use_container_width=True,
@@ -2930,7 +2930,7 @@ def show_workspace():
                     st.download_button(
                         "📋 Revise 입력 데이터 (JSON · 완전판)",
                         data=json_full,
-                        file_name=f"revise_input_{title}_FULL.json",
+                        file_name=f"시나리오최종보고서_{title}_FULL.json",
                         mime="application/json",
                         key="btn_download_full_json",
                         use_container_width=True,
