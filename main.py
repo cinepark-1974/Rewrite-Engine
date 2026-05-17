@@ -1652,30 +1652,44 @@ def render_washing(data):
         diagnosis    = safe(row.get('diagnosis', ''))
         prescription = safe(row.get('prescription', ''))
         opening_note = safe(row.get('opening_note', ''))
-        opening_note_html = (
-            f'<div style="background:#FFFBE6;border-left:3px solid #FFCB05;padding:8px 12px;border-radius:6px;margin-bottom:10px;font-size:0.82rem;color:#191970;line-height:1.6;">'
-            f'<strong style="font-size:0.7rem;color:#B8860B;">🎬 오프닝 노트:</strong> {opening_note}'
-            f'</div>'
-        ) if opening_note else ''
 
-        st.markdown(f"""
-        <div style="background:#FFFFFF;border:1px solid #E6E9EF;border-radius:10px;padding:16px;margin-bottom:12px;">
-            <div style="margin-bottom:10px;">
-                <span style="background:#191970;color:#FFFFFF !important;padding:2px 10px;border-radius:4px;font-weight:900;font-size:0.72rem;">{seq}</span>
-                <span style="font-weight:700;margin-left:10px;color:#191970;">{label}</span>
-            </div>
-            {opening_note_html}
-            <div style="display:flex;gap:12px;">
-                <div style="flex:1;background:#FFF5F5;padding:12px;border-radius:8px;border-left:3px solid #D32F2F;">
-                    <div style="color:#D32F2F;font-size:0.72rem;font-weight:800;margin-bottom:5px;">⚠️ 진단</div>
-                    <div style="font-size:0.88rem;line-height:1.6;color:#191970;">{diagnosis}</div>
-                </div>
-                <div style="flex:1.2;background:#EEF0FA;padding:12px;border-radius:8px;border-left:3px solid #191970;">
-                    <div style="color:#191970;font-size:0.72rem;font-weight:800;margin-bottom:5px;">✅ 처방</div>
-                    <div style="font-size:0.88rem;line-height:1.6;color:#191970;">{prescription}</div>
-                </div>
-            </div>
-        </div>""", unsafe_allow_html=True)
+        # 카드 헤더 (seq 배지 + label) — 한 줄 HTML
+        header_html = (
+            '<div style="background:#FFFFFF;border:1px solid #E6E9EF;border-top-left-radius:10px;border-top-right-radius:10px;padding:14px 16px 8px;margin-top:10px;">'
+            f'<span style="background:#191970;color:#FFFFFF !important;padding:2px 10px;border-radius:4px;font-weight:900;font-size:0.72rem;">{seq}</span>'
+            f'<span style="font-weight:700;margin-left:10px;color:#191970;">{label}</span>'
+            '</div>'
+        )
+        st.markdown(header_html, unsafe_allow_html=True)
+
+        # 오프닝 노트 (있을 때만)
+        if opening_note:
+            on_html = (
+                '<div style="background:#FFFBE6;border-left:3px solid #FFCB05;padding:8px 12px;border-radius:6px;margin-bottom:8px;font-size:0.82rem;color:#191970;line-height:1.6;">'
+                '<strong style="font-size:0.7rem;color:#B8860B;">🎬 오프닝 노트:</strong> '
+                f'{opening_note}'
+                '</div>'
+            )
+            st.markdown(on_html, unsafe_allow_html=True)
+
+        # 진단/처방 좌우 분리 (한국어 특수문자 안전)
+        col_d, col_p = st.columns([1, 1.2], gap="small")
+        with col_d:
+            diag_html = (
+                '<div style="background:#FFF5F5;padding:12px;border-radius:8px;border-left:3px solid #D32F2F;margin-bottom:12px;">'
+                '<div style="color:#D32F2F;font-size:0.72rem;font-weight:800;margin-bottom:5px;">⚠️ 진단</div>'
+                f'<div style="font-size:0.88rem;line-height:1.6;color:#191970;">{diagnosis}</div>'
+                '</div>'
+            )
+            st.markdown(diag_html, unsafe_allow_html=True)
+        with col_p:
+            pres_html = (
+                '<div style="background:#EEF0FA;padding:12px;border-radius:8px;border-left:3px solid #191970;margin-bottom:12px;">'
+                '<div style="color:#191970;font-size:0.72rem;font-weight:800;margin-bottom:5px;">✅ 처방</div>'
+                f'<div style="font-size:0.88rem;line-height:1.6;color:#191970;">{prescription}</div>'
+                '</div>'
+            )
+            st.markdown(pres_html, unsafe_allow_html=True)
 
     # 9-B. 대사 분석 (Dialogue Washing)
     da = data.get('dialogue_analysis', {})
@@ -1787,28 +1801,49 @@ def render_washing(data):
             for issue in issues:
                 axis_label = safe(issue.get('axis', ''))
                 axis_color = axis_colors.get(issue.get('axis', ''), '#FF6432')
-                st.markdown(f"""
-                <div style="background:#FFFFFF;border:1px solid #E6E9EF;border-radius:10px;padding:16px;margin-bottom:12px;">
-                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-                        <span style="background:#FF6432;color:#FFFFFF;padding:2px 10px;border-radius:4px;font-weight:900;font-size:0.72rem;">{safe(issue.get('type',''))}</span>
-                        <span style="background:{axis_color};color:#FFFFFF;padding:2px 10px;border-radius:4px;font-weight:700;font-size:0.68rem;">{axis_label}</span>
-                        <span style="font-size:0.83rem;color:#555;">{safe(issue.get('description',''))}</span>
-                    </div>
-                    <div style="display:flex;gap:10px;margin-bottom:10px;">
-                        <div style="flex:1;background:#FFF5F5;padding:11px;border-radius:8px;border-left:3px solid #FF6432;">
-                            <div style="font-size:0.68rem;font-weight:800;color:#CC3300;margin-bottom:5px;">❌ BEFORE (원문)</div>
-                            <div style="font-size:0.88rem;line-height:1.6;color:#333;font-family:'Courier New',monospace;">{safe(issue.get('example_bad',''))}</div>
-                        </div>
-                        <div style="flex:1;background:#EDFAF3;padding:11px;border-radius:8px;border-left:3px solid #2EC484;">
-                            <div style="font-size:0.68rem;font-weight:800;color:#1A7A50;margin-bottom:5px;">✅ ④ 개선 제안 (AFTER)</div>
-                            <div style="font-size:0.88rem;line-height:1.6;color:#333;font-family:'Courier New',monospace;">{safe(issue.get('example_good',''))}</div>
-                        </div>
-                    </div>
-                    <div style="background:#FFFBE6;padding:10px;border-radius:6px;border-left:3px solid #FFCB05;">
-                        <div style="font-size:0.68rem;font-weight:800;color:#B8860B;margin-bottom:4px;">✏️ Moon 리라이팅 지시</div>
-                        <div style="font-size:0.85rem;color:#191970;">{safe(issue.get('rewrite_note',''))}</div>
-                    </div>
-                </div>""", unsafe_allow_html=True)
+                issue_type = safe(issue.get('type', ''))
+                issue_desc = safe(issue.get('description', ''))
+                bad_text   = safe(issue.get('example_bad', ''))
+                good_text  = safe(issue.get('example_good', ''))
+                note_text  = safe(issue.get('rewrite_note', ''))
+
+                # 헤더: type 배지 + axis 배지 + description (한 줄 HTML)
+                header_html = (
+                    '<div style="background:#FFFFFF;border:1px solid #E6E9EF;border-top-left-radius:10px;border-top-right-radius:10px;padding:14px 16px 8px;margin-top:10px;">'
+                    f'<span style="background:#FF6432;color:#FFFFFF;padding:2px 10px;border-radius:4px;font-weight:900;font-size:0.72rem;">{issue_type}</span>'
+                    f'<span style="background:{axis_color};color:#FFFFFF;padding:2px 10px;border-radius:4px;font-weight:700;font-size:0.68rem;margin-left:6px;">{axis_label}</span>'
+                    f'<div style="font-size:0.83rem;color:#555;margin-top:6px;">{issue_desc}</div>'
+                    '</div>'
+                )
+                st.markdown(header_html, unsafe_allow_html=True)
+
+                # BEFORE / AFTER 좌우 분리
+                col_b, col_a = st.columns(2, gap="small")
+                with col_b:
+                    bad_html = (
+                        '<div style="background:#FFF5F5;padding:11px;border-radius:8px;border-left:3px solid #FF6432;margin-bottom:8px;">'
+                        '<div style="font-size:0.68rem;font-weight:800;color:#CC3300;margin-bottom:5px;">❌ BEFORE (원문)</div>'
+                        f'<div style="font-size:0.88rem;line-height:1.6;color:#333;font-family:\'Courier New\',monospace;">{bad_text}</div>'
+                        '</div>'
+                    )
+                    st.markdown(bad_html, unsafe_allow_html=True)
+                with col_a:
+                    good_html = (
+                        '<div style="background:#EDFAF3;padding:11px;border-radius:8px;border-left:3px solid #2EC484;margin-bottom:8px;">'
+                        '<div style="font-size:0.68rem;font-weight:800;color:#1A7A50;margin-bottom:5px;">✅ ④ 개선 제안 (AFTER)</div>'
+                        f'<div style="font-size:0.88rem;line-height:1.6;color:#333;font-family:\'Courier New\',monospace;">{good_text}</div>'
+                        '</div>'
+                    )
+                    st.markdown(good_html, unsafe_allow_html=True)
+
+                # Moon 리라이팅 지시 (하단 노란 박스)
+                note_html = (
+                    '<div style="background:#FFFBE6;padding:10px;border-radius:6px;border-left:3px solid #FFCB05;margin-bottom:14px;">'
+                    '<div style="font-size:0.68rem;font-weight:800;color:#B8860B;margin-bottom:4px;">✏️ Moon 리라이팅 지시</div>'
+                    f'<div style="font-size:0.85rem;color:#191970;">{note_text}</div>'
+                    '</div>'
+                )
+                st.markdown(note_html, unsafe_allow_html=True)
 
         # rewrite_directives는 내부 프롬프트용 - 보고서에 미노출
 
