@@ -1581,68 +1581,74 @@ def render_washing(data):
                         f"</div>"
                     )
 
-        # ── 조건부 HTML 블록을 미리 조립 (f-string 안 삼항연산자 회피) ──
+        # ── 조건부 HTML 블록을 미리 조립 (한 줄 HTML로 압축, markdown 파서 안전) ──
         switch_html = (
-            f'<div style="background:#FFF5F5;border-left:3px solid #D32F2F;padding:10px 14px;border-radius:6px;margin-bottom:10px;">'
-            f'<strong style="font-size:0.72rem;color:#D32F2F;display:block;margin-bottom:4px;">↻ 기법 전환 이유</strong>'
+            '<div style="background:#FFF5F5;border-left:3px solid #D32F2F;padding:10px 14px;border-radius:6px;margin-bottom:10px;">'
+            '<strong style="font-size:0.72rem;color:#D32F2F;display:block;margin-bottom:4px;">↻ 기법 전환 이유</strong>'
             f'<div style="font-size:0.84rem;color:#191970;line-height:1.6;">{switch_reason}</div>'
-            f'</div>'
+            '</div>'
         ) if switch_reason else ''
 
         completion_html = (
-            f'<div style="background:#EEF0FA;padding:12px 14px;border-radius:8px;margin-bottom:10px;">'
-            f'<strong style="font-size:0.72rem;color:#191970;display:block;margin-bottom:6px;">✨ 완성도 끌어올림 방안</strong>'
+            '<div style="background:#EEF0FA;padding:12px 14px;border-radius:8px;margin-bottom:10px;">'
+            '<strong style="font-size:0.72rem;color:#191970;display:block;margin-bottom:6px;">✨ 완성도 끌어올림 방안</strong>'
             f'<div style="font-size:0.88rem;color:#191970;line-height:1.7;">{completion}</div>'
-            f'</div>'
+            '</div>'
         ) if completion else ''
 
         preserve_html = (
-            f'<div style="margin-bottom:10px;">'
-            f'<strong style="font-size:0.75rem;color:#1A7A50;display:block;margin-bottom:6px;">🔒 원본에서 반드시 보존할 것</strong>'
+            '<div style="margin-bottom:10px;">'
+            '<strong style="font-size:0.75rem;color:#1A7A50;display:block;margin-bottom:6px;">🔒 원본에서 반드시 보존할 것</strong>'
             f'<ul style="margin:0;padding-left:20px;">{preserve_items}</ul>'
-            f'</div>'
+            '</div>'
         ) if preserve_items else ''
 
         inj_html = (
-            f'<div style="margin-bottom:10px;">'
-            f'<strong style="font-size:0.75rem;color:#B8860B;display:block;margin-bottom:6px;">💊 도파민 보강 처방</strong>'
+            '<div style="margin-bottom:10px;">'
+            '<strong style="font-size:0.75rem;color:#B8860B;display:block;margin-bottom:6px;">💊 도파민 보강 처방</strong>'
             f'{inj_items}'
-            f'</div>'
+            '</div>'
         ) if inj_items else ''
 
         complex_html = (
-            f'<div style="background:#FFF3EE;border-left:3px solid #FF6432;padding:10px 14px;border-radius:6px;margin-bottom:10px;">'
-            f'<strong style="font-size:0.72rem;color:#CC3300;display:block;margin-bottom:4px;">🎭 복합 장르 조정</strong>'
+            '<div style="background:#FFF3EE;border-left:3px solid #FF6432;padding:10px 14px;border-radius:6px;margin-bottom:10px;">'
+            '<strong style="font-size:0.72rem;color:#CC3300;display:block;margin-bottom:4px;">🎭 복합 장르 조정</strong>'
             f'<div style="font-size:0.84rem;color:#191970;line-height:1.6;">{complex_note}</div>'
-            f'</div>'
+            '</div>'
         ) if complex_note else ''
 
         direction_html = (
-            f'<div style="background:#FFFBE6;border:1px dashed #FFCB05;padding:12px 14px;border-radius:8px;">'
-            f'<strong style="font-size:0.72rem;color:#B8860B;display:block;margin-bottom:4px;">🧭 교정 전체 방향</strong>'
+            '<div style="background:#FFFBE6;border:1px dashed #FFCB05;padding:12px 14px;border-radius:8px;margin-bottom:10px;">'
+            '<strong style="font-size:0.72rem;color:#B8860B;display:block;margin-bottom:4px;">🧭 교정 전체 방향</strong>'
             f'<div style="font-size:0.88rem;color:#191970;line-height:1.7;font-weight:600;">{direction}</div>'
-            f'</div>'
+            '</div>'
         ) if direction else ''
 
-        st.markdown(f"""
-        <div class="report-card">
-            <h3>8-C. 오프닝 교정 처방 (Opening RX)</h3>
-            <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
-                <div style="background:{respect_bg};color:{respect_color};border:1px solid {respect_border};
-                            padding:6px 14px;border-radius:20px;font-weight:800;font-size:0.82rem;">
-                    {respect_label}
-                </div>
-                <div style="background:#191970;color:#FFCB05;padding:6px 14px;border-radius:10px;font-weight:800;font-size:0.85rem;">
-                    유지 기법: {safe(kept_ko)}
-                </div>
-            </div>
-            {switch_html}
-            {completion_html}
-            {preserve_html}
-            {inj_html}
-            {complex_html}
-            {direction_html}
-        </div>""", unsafe_allow_html=True)
+        # 카드 시작 + 헤더 + 배지 2개 (한 단위)
+        header_html = (
+            '<div class="report-card">'
+            '<h3>8-C. 오프닝 교정 처방 (Opening RX)</h3>'
+            '<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap;">'
+            f'<div style="background:{respect_bg};color:{respect_color};border:1px solid {respect_border};padding:6px 14px;border-radius:20px;font-weight:800;font-size:0.82rem;">{respect_label}</div>'
+            f'<div style="background:#191970;color:#FFCB05;padding:6px 14px;border-radius:10px;font-weight:800;font-size:0.85rem;">유지 기법: {safe(kept_ko)}</div>'
+            '</div>'
+            '</div>'
+        )
+        st.markdown(header_html, unsafe_allow_html=True)
+
+        # 6개 조건부 블록을 각각 분리 호출
+        if switch_html:
+            st.markdown(switch_html, unsafe_allow_html=True)
+        if completion_html:
+            st.markdown(completion_html, unsafe_allow_html=True)
+        if preserve_html:
+            st.markdown(preserve_html, unsafe_allow_html=True)
+        if inj_html:
+            st.markdown(inj_html, unsafe_allow_html=True)
+        if complex_html:
+            st.markdown(complex_html, unsafe_allow_html=True)
+        if direction_html:
+            st.markdown(direction_html, unsafe_allow_html=True)
 
     # 9. 시퀀스 워싱
     st.markdown('<div class="report-card"><h3>9. 시퀀스 워싱 (Washing Table)</h3></div>', unsafe_allow_html=True)
