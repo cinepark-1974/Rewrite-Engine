@@ -2789,26 +2789,54 @@ def show_workspace():
     # CHRIS 완료 시 분석 리포트 즉시 다운로드 (세션 캐시)
     if st.session_state.analysis:
         title = re.sub(r'[/*?:"<>|]', '_', st.session_state.analysis.get('title', '제목없음'))
-        cache_key = '_docx_chris_cache'
-        cache_id_key = '_docx_chris_id'
         current_id = id(st.session_state.analysis)
-        try:
-            if st.session_state.get(cache_id_key) != current_id:
-                st.session_state[cache_key] = create_docx(st.session_state.analysis, level="chris")
-                st.session_state[cache_id_key] = current_id
-            docx_chris = st.session_state.get(cache_key)
-            if docx_chris:
-                st.download_button(
-                    "📄 CHRIS 분석 리포트 다운로드 (DOCX)",
-                    data=docx_chris,
-                    file_name=f"시나리오분석_{title}_CHRIS.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    key="btn_download_chris",
-                    use_container_width=True,
-                    help="CHRIS 분석만 담긴 리포트 (섹션 1~8-B) — 초기 스크리닝/투자 검토용"
-                )
-        except Exception as e:
-            st.caption(f"⚠️ CHRIS 리포트 생성 지연: {type(e).__name__}")
+
+        # ── DOCX + JSON 두 가지 다운로드를 2-column으로 ──
+        c_col1, c_col2 = st.columns(2)
+
+        # DOCX (사람용 보고서)
+        with c_col1:
+            cache_key = '_docx_chris_cache'
+            cache_id_key = '_docx_chris_id'
+            try:
+                if st.session_state.get(cache_id_key) != current_id:
+                    st.session_state[cache_key] = create_docx(st.session_state.analysis, level="chris")
+                    st.session_state[cache_id_key] = current_id
+                docx_chris = st.session_state.get(cache_key)
+                if docx_chris:
+                    st.download_button(
+                        "📄 CHRIS 분석 리포트 (DOCX)",
+                        data=docx_chris,
+                        file_name=f"시나리오분석_{title}_CHRIS.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        key="btn_download_chris",
+                        use_container_width=True,
+                        help="CHRIS 분석만 담긴 리포트 (섹션 1~8-B) — 초기 스크리닝/투자 검토용"
+                    )
+            except Exception as e:
+                st.caption(f"⚠️ CHRIS 리포트 생성 지연: {type(e).__name__}")
+
+        # JSON (Revise Engine 등 외부 엔진 입력용 · CHRIS 시점)
+        with c_col2:
+            json_cache_key = '_json_chris_cache'
+            json_cache_id_key = '_json_chris_id'
+            try:
+                if st.session_state.get(json_cache_id_key) != current_id:
+                    st.session_state[json_cache_key] = export_diagnosis_json(st.session_state.analysis, level="chris")
+                    st.session_state[json_cache_id_key] = current_id
+                json_chris = st.session_state.get(json_cache_key)
+                if json_chris:
+                    st.download_button(
+                        "📋 분석 데이터 (JSON · CHRIS 시점)",
+                        data=json_chris,
+                        file_name=f"시나리오분석_{title}_CHRIS.json",
+                        mime="application/json",
+                        key="btn_download_chris_json",
+                        use_container_width=True,
+                        help="CHRIS 4축·15-Beat·서사동력·장르 진단 원본 데이터 — 외부 엔진 입력/검증용"
+                    )
+            except Exception as e:
+                st.caption(f"⚠️ JSON 생성 지연: {type(e).__name__}")
 
     if not st.session_state.analysis:
         agent_card("🧹", "SHIHO", "Script Doctor",
@@ -2992,6 +3020,7 @@ def show_workspace():
                     st.session_state[k] = 0 if k == 'step' else None
                 # DOCX·JSON 세션 캐시 무효화
                 for k in ['_docx_chris_cache', '_docx_chris_id',
+                          '_json_chris_cache', '_json_chris_id',
                           '_docx_shiho_cache', '_docx_shiho_id',
                           '_json_shiho_cache', '_json_shiho_id',
                           '_json_full_cache', '_json_full_id']:
@@ -3015,7 +3044,7 @@ def show_index():
             for k in ['step', 'raw_text', 'analysis', 'washing', 'rewriting']:
                 st.session_state[k] = 0 if k == 'step' else None
             # DOCX 세션 캐시 무효화
-            for k in ['_docx_chris_cache', '_docx_chris_id', '_docx_shiho_cache', '_docx_shiho_id', '_json_shiho_cache', '_json_shiho_id', '_json_full_cache', '_json_full_id']:
+            for k in ['_docx_chris_cache', '_docx_chris_id', '_json_chris_cache', '_json_chris_id', '_docx_shiho_cache', '_docx_shiho_id', '_json_shiho_cache', '_json_shiho_id', '_json_full_cache', '_json_full_id']:
                 st.session_state.pop(k, None)
             st.session_state.page = "workspace"
             st.rerun()
