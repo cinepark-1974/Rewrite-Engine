@@ -1,5 +1,5 @@
 // =================================================================
-// 👖 BLUE JEANS REWRITE ENGINE v2.2
+// 👖 BLUE JEANS REWRITE ENGINE v2.3
 // gen_docx.js — DOCX 보고서 생성 (Node.js + docx-js)
 // =================================================================
 // © 2026 BLUE JEANS PICTURES. All rights reserved.
@@ -586,6 +586,117 @@ if (om && Object.keys(om).length > 0) {
   children.push(divider());
 }
 
+// ━━ 8-D. 장르 정밀 진단축 (v2.3) ━━
+const ga = genre.genre_axes || {};
+const gaAxes = Array.isArray(ga.axes) ? ga.axes.filter(a => a && typeof a === 'object') : [];
+const gProfile = an.genre_profile || {};
+if (gaAxes.length > 0) {
+  children.push(heading('8-D. 장르 정밀 진단축 (Genre Axes)', 1));
+  children.push(kv('적용 프로파일', gProfile.genre_label || ga.profile_id || '-'));
+  children.push(kv('profile_id', gProfile.profile_id || ga.profile_id || '-'));
+  children.push(kv('source', gProfile.source || 'lookup'));
+  children.push(gap(80));
+
+  const SEV = {
+    'High':   { bg:C.bgRed,    bd:C.red,    ko:'심각' },
+    'Medium': { bg:C.bgYellow, bd:C.gold,   ko:'주의' },
+    'Low':    { bg:C.bgGreen,  bd:C.green,  ko:'양호' },
+  };
+
+  gaAxes.forEach(a => {
+    const sevRaw = String(a.severity || '');
+    const sevKey = sevRaw.charAt(0).toUpperCase() + sevRaw.slice(1).toLowerCase();
+    const sv = SEV[sevKey] || { bg:C.bgBlue, bd:C.navy, ko: sevRaw || '-' };
+    let score = parseInt(a.score, 10);
+    if (isNaN(score)) score = 0;
+
+    children.push(heading(`[${a.code || ''}] ${a.name || ''}`, 2));
+    children.push(kv('심각도', `${sv.ko}   ·   ${score} / 10`));
+    children.push(scoreBar(score));
+
+    const m = (a.metrics && typeof a.metrics === 'object') ? a.metrics : {};
+    const mKeys = Object.keys(m);
+    if (mKeys.length) {
+      const mText = mKeys.map(k => `${k} = ${m[k]}`).join('\n');
+      children.push(colorBox({ label:'실측 지표', text:mText, bg:C.bgBlue, borderColor:C.navy }));
+      children.push(gap(60));
+    }
+    if (a.finding) {
+      children.push(colorBox({ label:'🔍 진단', text:a.finding, bg:sv.bg, borderColor:sv.bd }));
+      children.push(gap(60));
+    }
+    if (a.prescription_hint) {
+      children.push(colorBox({ label:'💊 처방 방향 (SHIHO 인계)', text:a.prescription_hint, bg:C.bgBlue, borderColor:C.navy }));
+    }
+    children.push(gap(100));
+  });
+
+  // 러닝개그 생애주기
+  const gags = Array.isArray(ga.running_gags) ? ga.running_gags.filter(g => g && typeof g === 'object') : [];
+  if (gags.length) {
+    children.push(heading('러닝개그 생애주기 판정', 2));
+    gags.forEach(g => {
+      const status = String(g.status || '');
+      const broken = (status === '사망' || status === '값불일치' || status === '회수실패');
+      const gBg = broken ? C.bgRed : C.bgGreen;
+      const gBd = broken ? C.red : C.green;
+      const gIcon = broken ? '✗' : '✓';
+      children.push(kv(`${gIcon} ${g.element || ''}`, `${g.occurrences || 0}회   ·   ${status || '-'}`));
+      children.push(twoBox({
+        leftLabel:'설치 (Setup)',  leftItems:[String(g.setup || '-')],  leftBg:C.bgBlue, leftBd:C.navy,
+        rightLabel:'회수 (Payoff)', rightItems:[String(g.payoff || '-')], rightBg:gBg,     rightBd:gBd
+      }));
+      if (g.note || g.variation) {
+        children.push(gap(60));
+        children.push(colorBox({
+          label:'판정 근거',
+          text:`변주: ${g.variation || '-'}\n${g.note || ''}`,
+          bg:C.bgYellow, borderColor:C.gold
+        }));
+      }
+      children.push(gap(100));
+    });
+  }
+
+  if (ga.genre_score_breakdown) {
+    children.push(colorBox({
+      label:'📐 GENRE 축 점수 산출 근거',
+      text:ga.genre_score_breakdown, bg:C.bgBlue, borderColor:C.navy
+    }));
+  }
+  children.push(divider());
+} else if (gProfile && gProfile.applied === false) {
+  children.push(heading('8-D. 장르 정밀 진단축', 1));
+  children.push(para(
+    `등록된 정밀 진단 프로파일이 없어 기본 8장르 Rule Pack(${gProfile.genre_key || '-'})으로 진단했습니다. (source: fallback)`
+  ));
+  children.push(divider());
+}
+
+// ━━ 8-E. 보호 자산 (v2.3) ━━
+const protectedAssets = Array.isArray(an.protected_assets) ? an.protected_assets : [];
+if (protectedAssets.length > 0) {
+  children.push(heading('8-E. 보호 자산 (Protected Assets)', 1));
+  children.push(para('이미 잘 작동하는 자산입니다. 처방·리라이트에서 수정·삭제 금지 대상으로 전달됩니다.'));
+  children.push(gap(80));
+  protectedAssets.forEach(a => {
+    if (a && typeof a === 'object') {
+      children.push(kv(`🔒 [${a.kind || ''}] ${a.asset || ''}`, a.where || '-'));
+      if (a.why) {
+        children.push(colorBox({ label:'작동 이유', text:a.why, bg:C.bgGreen, borderColor:C.green }));
+        children.push(gap(60));
+      }
+      if (a.do_not) {
+        children.push(colorBox({ label:'금지 사항', text:a.do_not, bg:C.bgRed, borderColor:C.red }));
+      }
+      children.push(gap(100));
+    } else if (a) {
+      children.push(para(`🔒 ${a}`));
+    }
+  });
+  children.push(divider());
+}
+
 // ━━ 8-C. OPENING RX — SHIHO 교정 처방 (v2.2) ━━
 const rx = wa.opening_rx || {};
 if (showShiho && rx && Object.keys(rx).length > 0) {
@@ -682,6 +793,7 @@ if (showShiho) {
       children:[
         new TextRun({ text:`${row.seq||''}  `, font:'Arial', size:22, bold:true, color:C.gold }),
         new TextRun({ text:row.label||'', font:'Arial', size:22, bold:true, color:C.navy }),
+        new TextRun({ text: row.axis ? `   [${row.axis}]` : '', font:'Arial', size:17, bold:true, color:C.goldDark }),
       ]}));
     // 오프닝 노트 (Seq 1에 주로 붙음)
     if (row.opening_note) {
@@ -715,16 +827,104 @@ if (showShiho) {
         }),
       ]})]
     }));
+    // 대체 지정 (v2.3) — 삭제·축약 처방이 자리를 비우지 않도록
+    if (row.replace_with) {
+      children.push(gap(60));
+      children.push(colorBox({
+        label:'🔄 대체 지정', text:row.replace_with,
+        bg:C.bgGreen, borderColor:C.green, borderSize:8
+      }));
+    }
+  });
+  children.push(divider());
+}
+
+// ━━ 9-B. 처방 균형 + 장르 정밀축 처방 (v2.3) ━━
+const axGate = wa.axis_gate || {};
+const axDist = wa.axis_distribution || {};
+const gaxRx  = Array.isArray(wa.genre_axis_rx) ? wa.genre_axis_rx.filter(r => r && typeof r === 'object') : [];
+
+if (showShiho && (Object.keys(axGate).length || Object.keys(axDist).length)) {
+  children.push(heading('9-B. 처방 균형  (Prescription Balance)'));
+  let bRatio = parseFloat(axGate.ratio != null ? axGate.ratio : axDist.comedy_ratio);
+  if (isNaN(bRatio)) bRatio = 0;
+  let bMin = parseFloat(axGate.min_ratio != null ? axGate.min_ratio : axDist.gate_min);
+  if (isNaN(bMin)) bMin = 0.30;
+  const bPassed = (axGate.passed != null) ? !!axGate.passed
+                  : (axDist.gate_passed != null ? !!axDist.gate_passed : bRatio >= bMin);
+  const bCount = (axGate.comedy_count != null) ? axGate.comedy_count : (axDist.comedy_count || 0);
+  const bTotal = (axGate.total_count  != null) ? axGate.total_count  : (axDist.total_count  || 0);
+
+  children.push(colorBox({
+    label: bPassed ? '✓ 균형 통과' : '✗ 장르 처방 부족',
+    text: `장르 고유 처방 비율 ${Math.round(bRatio*100)}%  (하한 ${Math.round(bMin*100)}%)\n`
+        + `장르 처방 ${bCount}건 / 전체 처방 ${bTotal}건`,
+    bg: bPassed ? C.bgGreen : C.bgRed,
+    borderColor: bPassed ? C.green : C.red
+  }));
+
+  const missRw = Array.isArray(axGate.missing_replace_with) ? axGate.missing_replace_with.filter(Boolean) : [];
+  if (missRw.length) {
+    children.push(gap(80));
+    children.push(colorBox({
+      label:'⚠️ 대체 지정이 비어 있는 삭제 처방',
+      text: missRw.join(', ') + '\n대체 비트가 지정되지 않으면 그 자리가 정적으로 비워집니다.',
+      bg:C.bgRed, borderColor:C.red
+    }));
+  }
+  if (axGate.retried) {
+    children.push(gap(80));
+    children.push(para('※ 균형 게이트 미달로 처방을 1회 재생성했습니다.', {color:C.sub, size:17}));
+  }
+  if (axDist.note) {
+    children.push(gap(80));
+    children.push(colorBox({ label:'편중 판단', text:axDist.note, bg:C.bgBlue, borderColor:C.navy }));
+  }
+  if (wa.protected_assets_note) {
+    children.push(gap(80));
+    children.push(colorBox({ label:'🔒 보호 자산 준수', text:wa.protected_assets_note, bg:C.bgGreen, borderColor:C.green }));
+  }
+  children.push(divider());
+}
+
+if (showShiho && gaxRx.length) {
+  children.push(heading('9-C. 장르 정밀축 처방  (Genre Axis RX)'));
+  children.push(para('CHRIS가 하위 진단축에서 지적한 문제를 처방으로 전환한 항목입니다.'));
+  children.push(gap(80));
+  gaxRx.forEach(r => {
+    children.push(new Paragraph({ spacing:{ before:160, after:60 },
+      children:[
+        new TextRun({ text:`${r.axis_code||''}  `, font:'Arial', size:20, bold:true, color:C.gold }),
+        new TextRun({ text:r.axis_name||'', font:'Arial', size:20, bold:true, color:C.navy }),
+        new TextRun({ text: r.target ? `   ·   ${r.target}` : '', font:'Arial', size:17, color:C.sub }),
+      ]}));
+    if (r.prescription) {
+      children.push(colorBox({ label:'💊 처방', text:r.prescription, bg:C.bgYellow, borderColor:C.gold }));
+    }
+    if (r.replace_with) {
+      children.push(gap(60));
+      children.push(colorBox({ label:'🔄 대체 지정', text:r.replace_with, bg:C.bgGreen, borderColor:C.green, borderSize:8 }));
+    }
+    if (r.expected_effect) {
+      children.push(gap(60));
+      children.push(colorBox({ label:'🎯 기대 효과', text:r.expected_effect, bg:C.bgBlue, borderColor:C.navy, borderSize:8 }));
+    }
   });
   children.push(divider());
 }
 
 // ━━ 10. 대사 워싱 (Dialogue Washing) ━━
 if (showShiho) {
+  const axForHdr = da.axis_scores || {};
+  const extHdrLabels = [];
+  if ('comic_timing' in axForHdr)      extHdrLabels.push('④ 코믹 타이밍');
+  if ('comic_specificity' in axForHdr) extHdrLabels.push('⑤ 코믹 구체성');
+  if ('status_dynamics' in axForHdr)   extHdrLabels.push('⑥ 지위 관계');
+  const hdrText = ['① 캐릭터 적합성','② 서브텍스트','③ 행동/감정/관계 구동']
+    .concat(extHdrLabels).concat(['→ 개선 제안']).join('  ');
   children.push(heading('10. 대사 워싱  (Dialogue Washing)'));
   children.push(new Paragraph({ spacing:{ before:60, after:80 },
-    children:[new TextRun({ text:'① 캐릭터 적합성  ② 서브텍스트  ③ 행동/감정/관계 구동  ④ 개선 제안',
-      font:'Arial', size:18, color:C.sub })] }));
+    children:[new TextRun({ text:hdrText, font:'Arial', size:18, color:C.sub })] }));
 
 if (da.axis_scores) {
   const ax = da.axis_scores;
@@ -743,6 +943,18 @@ if (da.axis_scores) {
     { label:'② 서브텍스트',    criteria:'표면↔이면 충돌, 설명형 금지', val:ax.subtext||0,         color:'6B3FA0',  bg:C.white },
     { label:'③ 행동/감정/관계',criteria:'장면 추진력, 정보전달 금지',   val:ax.action_driven||0,   color:C.greenDk, bg:C.light },
   ];
+  // v2.3 — 장르 프로파일 확장 대사축 (데이터가 있을 때만)
+  const EXT_DA = [
+    { key:'comic_timing',      label:'④ 코믹 타이밍', criteria:'펀치라인이 문장 말미에 있는가',      color:'E0561B' },
+    { key:'comic_specificity', label:'⑤ 코믹 구체성', criteria:'추상어 대신 수치·고유명사가 있는가',  color:'CC3300' },
+    { key:'status_dynamics',   label:'⑥ 지위 관계',   criteria:'씬 시작과 끝의 위계가 흔들리는가',    color:C.goldDark },
+  ];
+  EXT_DA.forEach(e => {
+    if (e.key in ax) {
+      daAxes.push({ label:e.label, criteria:e.criteria, val:ax[e.key]||0, color:e.color,
+                    bg: daAxes.length % 2 ? C.white : C.light });
+    }
+  });
   const daBodyRows = daAxes.map(d => new TableRow({ children:[
     new TableCell({ borders:bds('DDDDDD'), shading:{fill:d.bg,type:ShadingType.CLEAR},
       margins:{top:80,bottom:80,left:120,right:120}, width:{size:dW2[0],type:WidthType.DXA},
@@ -806,7 +1018,7 @@ if ((da.issues||[]).length) {
           shading:{fill:C.bgGreen,type:ShadingType.CLEAR},
           margins:{top:100,bottom:100,left:160,right:160}, width:{size:W-issH,type:WidthType.DXA},
           children:[
-            new Paragraph({spacing:{after:60},children:[new TextRun({text:'✅ ④ 개선 제안 (AFTER)',font:'Arial',size:17,bold:true,color:C.greenDk})]}),
+            new Paragraph({spacing:{after:60},children:[new TextRun({text:'✅ 개선 제안 (AFTER)',font:'Arial',size:17,bold:true,color:C.greenDk})]}),
             new Paragraph({spacing:{line:310, lineRule:LineRuleType.AUTO},children:[new TextRun({text:String(issue.example_good||'-'),font:'Courier New',size:18,color:'333333'})]}),
           ]
         }),

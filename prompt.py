@@ -1,5 +1,5 @@
 # =================================================================
-# 👖 BLUE JEANS SCRIPT DOCTOR : REWRITE ENGINE v2.1
+# 👖 BLUE JEANS SCRIPT DOCTOR : REWRITE ENGINE v2.3
 # prompt.py — System Prompt + Genre Rules + OPENING MASTERY + 3-Stage Prompts
 # =================================================================
 # © 2026 BLUE JEANS PICTURES. All rights reserved.
@@ -426,6 +426,418 @@ Punch(씬 종결 패턴): {rules['punch']}
 """
 
 # =================================================================
+# [2-C] GENRE PROFILE — 장르 정밀 진단 프로파일 (genre_profiles/*.json)
+# v2.3 신규. 기준값을 코드에 하드코딩하지 않고 외부 JSON으로 분리한다.
+# 프로파일이 없는 장르는 기존 8장르 Rule Pack만으로 진단하며 source='fallback'.
+# =================================================================
+import os
+import json as _json
+
+GENRE_PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "genre_profiles")
+
+_PROFILE_CACHE = None
+_PROFILE_LOAD_ERROR = ""
+
+
+def load_genre_profiles(force: bool = False) -> dict:
+    """genre_profiles/*.json 을 읽어 {profile_id: profile} 반환.
+    로드에 실패해도 앱은 계속 동작한다(빈 dict 반환 + 에러 문자열 기록)."""
+    global _PROFILE_CACHE, _PROFILE_LOAD_ERROR
+    if _PROFILE_CACHE is not None and not force:
+        return _PROFILE_CACHE
+
+    profiles = {}
+    errors = []
+    try:
+        if os.path.isdir(GENRE_PROFILE_DIR):
+            for fn in sorted(os.listdir(GENRE_PROFILE_DIR)):
+                if not fn.endswith(".json") or fn.startswith("_"):
+                    continue
+                try:
+                    with open(os.path.join(GENRE_PROFILE_DIR, fn), "r", encoding="utf-8") as f:
+                        p = _json.load(f)
+                    if not isinstance(p, dict):
+                        errors.append(f"{fn}: 최상위가 객체가 아님")
+                        continue
+                    pid = p.get("profile_id") or os.path.splitext(fn)[0]
+                    p["profile_id"] = pid
+                    profiles[pid] = p
+                except Exception as e:
+                    errors.append(f"{fn}: {type(e).__name__}")
+        else:
+            errors.append(f"genre_profiles 폴더를 찾지 못했습니다 ({GENRE_PROFILE_DIR})")
+    except Exception as e:
+        errors.append(f"폴더 탐색 실패: {type(e).__name__}")
+
+    _PROFILE_CACHE = profiles
+    _PROFILE_LOAD_ERROR = " / ".join(errors)
+    return profiles
+
+
+def get_profile_load_error() -> str:
+    """프로파일 로드 중 발생한 문제 문자열 (없으면 '')"""
+    load_genre_profiles()
+    return _PROFILE_LOAD_ERROR
+
+
+def list_genre_profiles() -> list:
+    """등록된 프로파일 요약 목록 (UI 표시용)"""
+    return [
+        {"profile_id": p.get("profile_id", ""), "genre_label": p.get("genre_label", ""),
+         "axes": len(p.get("diagnostic_axes", []))}
+        for p in load_genre_profiles().values()
+    ]
+
+
+def resolve_genre_profile(genre_str: str, tags=None,
+                          genre_key_hint: str = "", profile_id_hint: str = "") -> dict:
+    """장르 문자열 → 프로파일 해석 결과.
+
+    반환:
+      applied     : 프로파일 적용 여부
+      profile_id  : 적용된 프로파일 id ('' = 미적용)
+      genre_label : 프로파일 장르명
+      source      : 'lookup' | 'lookup_by_id' | 'fallback'
+      genre_key   : 기존 8장르 Rule Pack 키 (항상 유효값)
+      profile     : 프로파일 dict 또는 None
+      warning     : 로드 실패 등 경고 문자열 ('' = 정상)
+    """
+    profiles = load_genre_profiles()
+    haystack = " ".join(
+        [str(genre_str or "")] + [str(t) for t in (tags or []) if t]
+    ).lower()
+
+    matched, source, best_len = None, "fallback", 0
+    if profile_id_hint and profile_id_hint in profiles:
+        matched, source = profiles[profile_id_hint], "lookup_by_id"
+    else:
+        for p in profiles.values():
+            for a in p.get("aliases", []):
+                al = str(a).lower().strip()
+                if al and al in haystack and len(al) > best_len:
+                    matched, best_len, source = p, len(al), "lookup"
+
+    if matched:
+        gk = matched.get("primary_genre_key") or ""
+        if gk not in GENRE_RULES:
+            gk = detect_genre_key(genre_str or "")
+        return {
+            "applied": True,
+            "profile_id": matched.get("profile_id", ""),
+            "genre_label": matched.get("genre_label", genre_str or ""),
+            "source": source,
+            "genre_key": gk,
+            "profile": matched,
+            "warning": "",
+        }
+
+    warn = ""
+    if _PROFILE_LOAD_ERROR:
+        warn = f"장르 프로파일을 읽지 못했습니다 — {_PROFILE_LOAD_ERROR}. 기본 8장르 Rule Pack으로 진단합니다."
+    return {
+        "applied": False,
+        "profile_id": "",
+        "genre_label": genre_str or "",
+        "source": "fallback",
+        "genre_key": genre_key_hint if genre_key_hint in GENRE_RULES else detect_genre_key(genre_str or ""),
+        "profile": None,
+        "warning": warn,
+    }
+
+
+def resolve_genre_profile_from_analysis(analysis) -> dict:
+    """CHRIS 분석 결과(dict)에서 프로파일을 다시 해석 — SHIHO/MOON/렌더러 공용"""
+    if not isinstance(analysis, dict):
+        return resolve_genre_profile("")
+
+    gi = analysis.get("genre", {})
+    if isinstance(gi, dict):
+        gname = str(gi.get("primary", ""))
+        tags = gi.get("tags", [])
+        tags = tags if isinstance(tags, list) else []
+    else:
+        gname, tags = str(gi), []
+
+    gc = analysis.get("genre_compliance", {})
+    gc = gc if isinstance(gc, dict) else {}
+    gp = analysis.get("genre_profile", {})
+    gp = gp if isinstance(gp, dict) else {}
+    ga = gc.get("genre_axes", {})
+    ga = ga if isinstance(ga, dict) else {}
+
+    pid = str(gp.get("profile_id", "") or ga.get("profile_id", "") or "")
+    return resolve_genre_profile(gname, tags,
+                                 genre_key_hint=str(gc.get("genre_key", "")),
+                                 profile_id_hint=pid)
+
+
+def _profile_axis_lines(profile: dict) -> str:
+    """진단축 정의를 프롬프트용 텍스트로"""
+    out = []
+    for ax in profile.get("diagnostic_axes", []):
+        if not isinstance(ax, dict):
+            continue
+        lines = [
+            f"  [{ax.get('code','')}] {ax.get('name','')}",
+            f"    질문: {ax.get('question','')}",
+            f"    측정: {ax.get('measure','')}",
+        ]
+        cats = ax.get("categories")
+        if isinstance(cats, dict) and cats:
+            lines.append("    분류: " + " / ".join([f"{k}={v}" for k, v in cats.items()]))
+        mk = ax.get("metric_keys", [])
+        if mk:
+            lines.append("    metrics 키(그대로 사용): " + ", ".join([str(m) for m in mk]))
+        for j in ax.get("judge", []):
+            lines.append(f"    판정: {j}")
+        out.append("\n".join(lines))
+    return "\n\n".join(out)
+
+
+def get_genre_profile_block(res: dict) -> str:
+    """CHRIS용 — 프로파일 하위 진단축 지시 블록"""
+    if not res or not res.get("applied") or not res.get("profile"):
+        return ""
+    p = res["profile"]
+    th_lines = "\n".join([f"  - {k}: {v}" for k, v in p.get("thresholds", {}).items()])
+    must = "\n".join([f"  - {m}" for m in p.get("must_have", [])])
+    fails = "\n".join([f"  - {f}" for f in p.get("fails", [])])
+    pa = p.get("protected_asset_rule", {})
+    min_assets = pa.get("min_comedy_assets", 1)
+
+    return f"""[정밀 진단 프로파일 — {p.get('genre_label','')} (profile_id: {p.get('profile_id','')})]
+genre 축을 단일 점수로 끝내지 마라. 아래 하위 진단축으로 분해해 채점하고
+그 결과를 genre_compliance.genre_axes에 반드시 기입하라.
+
+장르 본질: {p.get('core','')}
+장르적 재미: {p.get('genre_fun','')}
+
+[하위 진단축]
+{_profile_axis_lines(p)}
+
+[기준값 — 장편 약 100씬 기준. 씬 수가 다르면 비율 지표로 환산해 판단]
+{th_lines}
+
+[이 장르의 필수 요소]
+{must}
+
+[이 장르의 실패 패턴 — 발견되면 반드시 진단에 명시]
+{fails}
+
+[보호 자산 규칙]
+{pa.get('rule','')}
+- protected_assets 배열에 이 장르의 웃음 자산을 최소 {min_assets}개 포함할 것.
+- 잘 작동하는 웃음이 보호 목록에 없으면 다음 단계에서 삭제되어도 걸러지지 않는다.
+
+[중요] genre 축 점수는 위 하위축 판정의 종합이어야 한다.
+하위축 심각도가 High인 항목이 2개 이상이면 genre 축은 6점 이하로 채점하라.
+"""
+
+
+def get_profile_catalog_block() -> str:
+    """CHRIS용 — 장르를 아직 모르는 시점의 조건부 프로파일 카탈로그"""
+    profiles = load_genre_profiles()
+    if not profiles:
+        return ""
+    blocks = []
+    for p in profiles.values():
+        blocks.append(
+            f"■ profile_id: {p.get('profile_id','')} / 장르: {p.get('genre_label','')}\n"
+            f"  적용 조건(aliases): {', '.join([str(a) for a in p.get('aliases', [])])}\n\n"
+            + get_genre_profile_block({"applied": True, "profile": p})
+        )
+    return ("[장르 프로파일 카탈로그 — 조건부 정밀 진단]\n"
+            "판정한 1차 장르(또는 서브장르 태그)가 아래 프로파일의 aliases 중 하나에 해당하면\n"
+            "그 프로파일의 하위 진단축을 반드시 적용하고 genre_profile.applied=true로 기록한다.\n"
+            "해당하지 않으면 genre_profile.applied=false / source='fallback'으로 기록하고\n"
+            "genre_axes는 빈 객체({})로 둔다. 조용히 넘어가지 말고 반드시 명시하라.\n\n"
+            + "\n\n".join(blocks))
+
+
+def get_dialogue_axes_block(res: dict) -> str:
+    """SHIHO용 — 장르 전용 대사축 확장 블록"""
+    if not res or not res.get("applied") or not res.get("profile"):
+        return ""
+    p = res["profile"]
+    das = [d for d in p.get("dialogue_axes", []) if isinstance(d, dict)]
+    if not das:
+        return ""
+    lines = []
+    for d in das:
+        lines.append(
+            f"  {d.get('code','')} {d.get('name','')} [key: {d.get('key','')}]\n"
+            f"    원칙: {d.get('principle','')}\n"
+            f"    진단 항목: {d.get('check','')}\n"
+            f"    약한 예: {d.get('example_weak','')}\n"
+            f"    강한 예: {d.get('example_strong','')}"
+        )
+    keys = ", ".join([str(d.get("key", "")) for d in das])
+    codes = " / ".join([f"{d.get('code','')} {d.get('name','')}" for d in das])
+    return f"""[대사축 확장 — {p.get('genre_label','')} 전용]
+기존 3축(① 캐릭터 적합성 / ② 서브텍스트 / ③ 행동 구동)은 전부 드라마 축이다.
+이 장르의 대사는 아래 축을 추가로 진단해야 한다.
+
+{chr(10).join(lines)}
+
+[출력 요구]
+1. dialogue_analysis.axis_scores에 {keys} 를 0~10 정수로 추가 기입한다.
+2. dialogue_analysis.issues의 axis 라벨로 {codes} 를 사용한 항목을 최소 3개 포함한다.
+3. 확장 축 issue의 example_good은 펀치라인 위치 이동 / 구체적 수치·고유명사 / 지위 역전 중
+   최소 하나를 실제로 적용한 문장이어야 한다. 추상적 지시로 대체하지 마라.
+"""
+
+
+def get_prescription_gate_block(res: dict) -> str:
+    """SHIHO용 — 처방 균형 게이트 블록"""
+    if not res or not res.get("applied") or not res.get("profile"):
+        return ""
+    p = res["profile"]
+    pb = p.get("prescription_balance", {})
+    ratio = pb.get("comedy_min_ratio", 0.30)
+    codes = ", ".join([str(a.get("code", "")) for a in p.get("diagnostic_axes", []) if isinstance(a, dict)])
+    return f"""[처방 균형 게이트 — 필수 준수]
+{pb.get('rule','')}
+
+1. washing_table의 모든 항목에 axis 필드를 붙인다: "정서/구조" | "코미디" | "복합" 중 하나.
+2. 전체 처방 중 axis가 "코미디" 또는 "복합"인 항목이 {int(float(ratio)*100)}% 이상이어야 한다.
+   미달이면 처방을 다시 설계하라. 정서·구조 처방만으로는 이 장르가 개선되지 않는다.
+3. axis_distribution 필드에 정서/구조 대비 코미디 비율을 산출해 명시한다.
+4. genre_axis_rx 배열에 CHRIS가 지적한 하위축({codes}) 중 심각도가 높은 축을 최소 3개 골라 처방한다.
+5. {pb.get('deletion_rule','')}
+   - 삭제·축약을 포함하는 처방은 replace_with 필드를 반드시 채운다.
+     비어 있으면 그 처방은 무효로 간주한다. "무엇을 뺀다"만 있고 "무엇으로 채운다"가 없으면
+     그 자리가 정적으로 비어 후반이 조용해진다.
+"""
+
+
+def summarize_genre_axes(genre_compliance) -> str:
+    """CHRIS의 genre_axes 결과 → SHIHO/MOON 프롬프트용 요약"""
+    gc = genre_compliance if isinstance(genre_compliance, dict) else {}
+    ga = gc.get("genre_axes", {})
+    if not isinstance(ga, dict):
+        return ""
+    axes = ga.get("axes", [])
+    axes = axes if isinstance(axes, list) else []
+
+    lines = []
+    for a in axes:
+        if not isinstance(a, dict):
+            continue
+        m = a.get("metrics", {})
+        mtxt = ", ".join([f"{k}={v}" for k, v in m.items()]) if isinstance(m, dict) else str(m)
+        lines.append(
+            f"  [{a.get('code','')}] {a.get('name','')} — 심각도 {a.get('severity','')} / 점수 {a.get('score','')}\n"
+            f"    실측: {mtxt}\n"
+            f"    진단: {a.get('finding','')}\n"
+            f"    처방 방향: {a.get('prescription_hint','')}"
+        )
+    if not lines:
+        return ""
+
+    out = "[CHRIS 장르 정밀 진단 결과 — 이 축들이 처방으로 이어져야 한다]\n" + "\n".join(lines)
+
+    gags = ga.get("running_gags", [])
+    gag_lines = []
+    if isinstance(gags, list):
+        for g in gags:
+            if isinstance(g, dict):
+                gag_lines.append(
+                    f"  - {g.get('element','')} ({g.get('occurrences','')}회) → 상태: {g.get('status','')}\n"
+                    f"    설치: {g.get('setup','')} / 회수: {g.get('payoff','')} / {g.get('note','')}"
+                )
+    if gag_lines:
+        out += "\n\n[러닝개그 판정]\n" + "\n".join(gag_lines)
+
+    if ga.get("genre_score_breakdown"):
+        out += f"\n\n[genre 점수 산출 근거]\n  {ga.get('genre_score_breakdown')}"
+    return out
+
+
+def summarize_protected_assets(analysis) -> str:
+    """CHRIS의 protected_assets → SHIHO/MOON 프롬프트용 보호 목록"""
+    pas = analysis.get("protected_assets", []) if isinstance(analysis, dict) else []
+    if not isinstance(pas, list) or not pas:
+        return ""
+    lines = []
+    for a in pas:
+        if isinstance(a, dict):
+            lines.append(
+                f"  - [{a.get('kind','')}] {a.get('asset','')} (위치: {a.get('where','')})\n"
+                f"    보호 이유: {a.get('why','')}\n"
+                f"    금지: {a.get('do_not','')}"
+            )
+        elif a:
+            lines.append(f"  - {a}")
+    if not lines:
+        return ""
+    return ("[보호 자산(Protected Assets) — 수정·삭제 절대 금지]\n"
+            "CHRIS가 '잘 작동한다'고 판정한 자산이다. 처방·리라이트에서 이 항목을 약화시키면 실패다.\n"
+            + "\n".join(lines))
+
+
+def check_prescription_balance(analysis, washing) -> dict:
+    """SHIHO 처방의 장르 균형 게이트 검사.
+    프로파일 미적용이면 None 반환 (검사 대상 아님)."""
+    res = resolve_genre_profile_from_analysis(analysis)
+    if not res.get("applied") or not res.get("profile"):
+        return None
+
+    pb = res["profile"].get("prescription_balance", {})
+    try:
+        min_ratio = float(pb.get("comedy_min_ratio", 0.30))
+    except Exception:
+        min_ratio = 0.30
+
+    wa = washing if isinstance(washing, dict) else {}
+    rows = wa.get("washing_table", [])
+    rows = rows if isinstance(rows, list) else []
+
+    comedy = total = 0
+    missing_replace = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        total += 1
+        if str(r.get("axis", "")).strip() in ("코미디", "복합"):
+            comedy += 1
+        presc = str(r.get("prescription", "")) + " " + str(r.get("diagnosis", ""))
+        if any(k in presc for k in ("삭제", "제거", "빼", "축약", "덜어")) and not str(r.get("replace_with", "")).strip():
+            missing_replace.append(str(r.get("seq", "")))
+
+    rx = wa.get("genre_axis_rx", [])
+    rx_n = len([x for x in rx if isinstance(x, dict)]) if isinstance(rx, list) else 0
+    comedy += rx_n
+    total += rx_n
+
+    ratio = (comedy / total) if total else 0.0
+    passed = (ratio >= min_ratio) and not missing_replace
+
+    notes = []
+    if ratio < min_ratio:
+        notes.append(
+            f"코미디 처방 비율이 {ratio*100:.0f}%로 하한 {min_ratio*100:.0f}%에 미달한다. "
+            f"정서·구조 처방을 코미디 축 처방으로 교체하거나, genre_axis_rx를 보강하라."
+        )
+    if missing_replace:
+        notes.append(
+            f"삭제·축약 처방인데 replace_with가 비어 있는 항목: {', '.join([s for s in missing_replace if s])}. "
+            f"각 항목에 무엇으로 대체하는지 반드시 지정하라."
+        )
+
+    return {
+        "passed": passed,
+        "ratio": round(ratio, 3),
+        "min_ratio": min_ratio,
+        "comedy_count": comedy,
+        "total_count": total,
+        "genre_axis_rx_count": rx_n,
+        "missing_replace_with": missing_replace,
+        "profile_id": res.get("profile_id", ""),
+        "retry_note": " ".join(notes),
+    }
+
+
+# =================================================================
 # [3] 15-BEAT SHEET 참조
 # =================================================================
 BEATS_15 = [
@@ -465,7 +877,7 @@ PROBLEM_TYPES = [
 # =================================================================
 # [5] ANALYSIS PROMPT BUILDER (CHRIS)
 # =================================================================
-def build_analysis_prompt(script_text: str) -> str:
+def build_analysis_prompt(script_text: str, writer_ref: dict = None) -> str:
     """CHRIS 분석 프롬프트 — 장르 자동 감지 후 Rule Pack + OPENING MASTERY 주입"""
     # 오프닝 6기법 참조 텍스트 (장르 무관 — CHRIS는 역추적 진단)
     all_techniques = "\n".join([
@@ -477,6 +889,17 @@ def build_analysis_prompt(script_text: str) -> str:
         for g, d in OPENING_DNA.items()
     ])
     dopamine_list = "\n".join([f"  - {k}: {v}" for k, v in DOPAMINE_SIX_SENSES.items()])
+    profile_catalog = get_profile_catalog_block()
+
+    # Writer Engine 세션 참조 블록 (선택) — 보조 근거로만 사용
+    writer_block = ""
+    if writer_ref:
+        try:
+            from writer_link import build_writer_reference_block
+            writer_block = build_writer_reference_block(writer_ref)
+        except Exception:
+            writer_block = ""
+
 
     return f"""{SYSTEM_PROMPT}
 
@@ -535,10 +958,22 @@ CHRIS는 "생성자"가 아니라 "진단자"다. 다음 순서로 오프닝을 
 
 {DOPAMINE_VS_PROVOCATION_WARNING}
 
+{profile_catalog}
+
+{writer_block}
+
 [4축 점수 규칙]
 - 0~10 사이 정수만 허용 (100점 만점 금지, 소수점 금지)
 - 관대한 점수 금지. 장르 필수 요소 누락 시 해당 축 6점 이하.
 - GENRE 축은 반드시 장르 Rule Pack 기준으로 채점.
+- 정밀 진단 프로파일이 적용되는 장르라면, GENRE 축 점수는 하위 진단축(G1, G2, ...) 판정의 종합이어야 한다.
+  "genre 6점"만 남기고 왜 6점인지 서술이 없는 출력은 실패다. 반드시 genre_axes로 근거를 남겨라.
+
+[보호 자산 원칙 — protected_assets]
+- 진단만 남기고 강점을 보호하지 않으면, 잘 작동하던 요소가 다음 단계에서 삭제된다.
+- pros(장점)에 지목한 것 중 실제로 작동하는 자산을 protected_assets에 구조화해 기록하라.
+- 장르 필수 재미(코미디의 웃음, 스릴러의 정보 비대칭 등)에 해당하는 자산을 최소 1개 포함하라.
+- 각 자산에는 위치(씬 번호 또는 구간)와 "이 자산에 대해 금지되는 수정"을 명시하라.
 
 [JSON 출력 스키마]
 {{
@@ -547,6 +982,22 @@ CHRIS는 "생성자"가 아니라 "진단자"다. 다음 순서로 오프닝을 
     "primary": "1차 장르명",
     "tags": ["서브장르1", "서브장르2"]
   }},
+  "genre_profile": {{
+    "applied": false,
+    "profile_id": "적용된 프로파일 id (카탈로그에 해당 없으면 빈 문자열)",
+    "genre_label": "프로파일 장르명 (미적용이면 판정한 1차 장르명)",
+    "source": "lookup 또는 fallback",
+    "note": "왜 이 프로파일을 적용했는지 / 왜 미적용인지 1줄"
+  }},
+  "protected_assets": [
+    {{
+      "asset": "보호할 자산 (구체적으로)",
+      "kind": "코미디/구조/모티프/캐릭터/로그라인 중 하나",
+      "where": "S#번호 또는 구간",
+      "why": "왜 잘 작동하는지 1줄",
+      "do_not": "이 자산에 대해 금지되는 수정 1줄"
+    }}
+  ],
   "scores": {{"structure":0,"hero":0,"concept":0,"genre":0}},
   "verdict": {{"status":"추천/고려/비추천","rationale":"근거 3줄"}},
   "logline": {{"original":"원본 로그라인","washed":"개선 로그라인"}},
@@ -579,6 +1030,32 @@ CHRIS는 "생성자"가 아니라 "진단자"다. 다음 순서로 오프닝을 
   "tension_data": [0,2,5,8,10,8,5,7,9,10,9,8],
   "genre_compliance": {{
     "genre_key": "장르 Rule Pack 키 (예: 스릴러, 멜로/로맨스 등)",
+    "genre_axes": {{
+      "profile_id": "적용 프로파일 id (미적용이면 빈 문자열이고 axes는 빈 배열)",
+      "axes": [
+        {{
+          "code": "G1",
+          "name": "하위축 이름",
+          "score": 0,
+          "severity": "High / Medium / Low 중 하나",
+          "metrics": {{"해당 축의 metric_keys를 키로 그대로 사용": "실측값"}},
+          "finding": "실측 근거 2~3줄. 반드시 구체적 씬 번호를 포함할 것",
+          "prescription_hint": "SHIHO가 이어받을 처방 방향 1~2줄"
+        }}
+      ],
+      "running_gags": [
+        {{
+          "element": "3회 이상 반복되는 요소",
+          "occurrences": 0,
+          "setup": "설치 지점과 설치된 값",
+          "variation": "변주가 있었는지 1줄",
+          "payoff": "회수 지점과 회수된 값",
+          "status": "살아있음 / 사망 / 회수실패 / 값불일치 중 하나",
+          "note": "판정 근거 1줄. 값불일치면 설치값과 회수값을 나란히 적을 것"
+        }}
+      ],
+      "genre_score_breakdown": "genre 축 점수를 하위축 판정으로 어떻게 산출했는지 2~3줄"
+    }},
     "genre_fun_alive": true,
     "genre_fun_diagnosis": "이 작품에서 장르적 재미가 살아있는지/죽어있는지 구체적 판단 3줄",
     "must_have_check": [
@@ -635,20 +1112,84 @@ CHRIS는 "생성자"가 아니라 "진단자"다. 다음 순서로 오프닝을 
 # =================================================================
 # [6] DOCTORING PROMPT BUILDER (SHIHO)
 # =================================================================
-def build_doctoring_prompt(script_text: str, analysis: dict) -> str:
-    """SHIHO 워싱 프롬프트 — 장르 Rule Pack + OPENING MASTERY 교정 연동"""
+def build_doctoring_prompt(script_text: str, analysis: dict, retry_note: str = "") -> str:
+    """SHIHO 워싱 프롬프트 — 장르 Rule Pack + OPENING MASTERY + 장르 프로파일 연동
+
+    retry_note: 처방 균형 게이트 미달 시 재생성용 보강 지시 (빈 문자열이면 미사용)
+    """
     title = analysis.get("title", "")
     genre_info = analysis.get("genre", {})
     if isinstance(genre_info, dict):
         genre_name = genre_info.get("primary", "드라마")
     else:
         genre_name = str(genre_info)
-    
-    genre_key = analysis.get("genre_compliance", {}).get("genre_key", "")
-    if not genre_key:
-        genre_key = detect_genre_key(genre_name)
-    
-    genre_block = get_genre_rules_block(genre_key)
+
+    # ── 장르 정밀 진단 프로파일 해석 ──
+    profile_res = resolve_genre_profile_from_analysis(analysis)
+    genre_key = profile_res.get("genre_key", "")
+    if genre_key not in GENRE_RULES:
+        genre_key = analysis.get("genre_compliance", {}).get("genre_key", "") or detect_genre_key(genre_name)
+
+    # 프로파일 적용 시 base_genre_keys의 필수 요소도 함께 주입 (복합 장르 대응)
+    extra_rules_block = ""
+    if profile_res.get("applied") and profile_res.get("profile"):
+        for bk in profile_res["profile"].get("base_genre_keys", []):
+            if bk in GENRE_RULES and bk != genre_key:
+                extra_rules_block += "\n" + get_genre_rules_block(bk)
+
+    dialogue_axes_block = get_dialogue_axes_block(profile_res)
+    gate_block = get_prescription_gate_block(profile_res)
+    genre_axes_summary = summarize_genre_axes(analysis.get("genre_compliance", {}))
+    protected_block = summarize_protected_assets(analysis)
+    profile_banner = (
+        f"적용 프로파일: {profile_res.get('genre_label','')} "
+        f"(profile_id: {profile_res.get('profile_id','')} / source: {profile_res.get('source','')})"
+        if profile_res.get("applied")
+        else f"적용 프로파일: 없음 (source: fallback) — 기본 8장르 Rule Pack '{genre_key}'로 진단"
+    )
+    retry_block = (
+        "[처방 재생성 지시 — 직전 출력이 균형 게이트를 통과하지 못했다]\n" + retry_note
+        if retry_note else ""
+    )
+
+    # ── 프로파일 적용 시에만 추가되는 JSON 스키마 조각 ──
+    profile_schema = ""
+    extra_axis_json = ""
+    if profile_res.get("applied") and profile_res.get("profile"):
+        das = [d for d in profile_res["profile"].get("dialogue_axes", []) if isinstance(d, dict)]
+        if das:
+            extra_axis_json = "".join([
+                f',\n      "{d.get("key","")}": 5' for d in das if d.get("key")
+            ])
+        pb = profile_res["profile"].get("prescription_balance", {})
+        try:
+            gate_min = float(pb.get("comedy_min_ratio", 0.30))
+        except Exception:
+            gate_min = 0.30
+        profile_schema = (
+            '  "genre_axis_rx": [\n'
+            '    {\n'
+            '      "axis_code": "G1",\n'
+            '      "axis_name": "하위축 이름",\n'
+            '      "target": "대상 구간 또는 씬 번호",\n'
+            '      "prescription": "처방 2~3문장. 무엇을 어떻게 바꾸는지 구체적으로",\n'
+            '      "replace_with": "삭제·축약이 포함되면 그 자리를 무엇으로 채우는지 (없으면 빈 문자열)",\n'
+            '      "expected_effect": "기대 효과 1줄"\n'
+            '    }\n'
+            '  ],\n'
+            '  "axis_distribution": {\n'
+            '    "emotion_structure_count": 0,\n'
+            '    "comedy_count": 0,\n'
+            '    "total_count": 0,\n'
+            '    "comedy_ratio": 0.0,\n'
+            f'    "gate_min": {gate_min},\n'
+            '    "gate_passed": true,\n'
+            '    "note": "처방이 한쪽으로 편중되었는지 1줄 판단"\n'
+            '  },\n'
+            '  "protected_assets_note": "CHRIS가 지정한 보호 자산을 처방에서 어떻게 지켰는지 1~2줄",\n'
+        )
+
+    genre_block = get_genre_rules_block(genre_key) + extra_rules_block
     opening_block = get_opening_mastery_block(genre_key)
     
     # 장르 진단 결과 요약
@@ -677,10 +1218,21 @@ CHRIS가 분석한 결과를 바탕으로, 시퀀스 단위의 정밀 진단과 
 [작품 정보]
 제목: {title}
 장르: {genre_name}
+{profile_banner}
 
 {genre_block}
 
 {opening_block}
+
+{genre_axes_summary}
+
+{protected_block}
+
+{dialogue_axes_block}
+
+{gate_block}
+
+{retry_block}
 
 [CHRIS가 발견한 장르 실패 패턴]
 {fail_text}
@@ -702,7 +1254,10 @@ CHRIS가 분석한 결과를 바탕으로, 시퀀스 단위의 정밀 진단과 
 2. 대사 4축 분석: 캐릭터 적합성 / 서브텍스트 / 행동 구동 / 개선 제안.
 3. 각색 제안 10개: 구체적 Action Plan.
 4. 장르 재미 복구 제안: 장르적 재미가 약한 구간을 특정하고, Hook/Punch 패턴 기반 복구 방향 제시.
-5. [신규] OPENING RX — 오프닝 교정 처방.
+5. OPENING RX — 오프닝 교정 처방.
+6. [신규] 장르 정밀축 처방: CHRIS가 하위 진단축(G1~)에서 지적한 문제를 처방으로 전환한다.
+   진단에 없는 것은 처방될 수 없고, 처방되지 않은 것은 수정될 수 없다.
+   반대로 진단이 있는데 처방이 없으면 그 진단은 버려진다. 하위축 지적은 반드시 처방으로 받아라.
 
 [OPENING RX — SHIHO 전용 오프닝 교정 원칙]
 SHIHO는 "작가의 원래 의도를 존중하면서 기법만 강화"하는 교정을 설계한다.
@@ -733,17 +1288,22 @@ SHIHO는 "작가의 원래 의도를 존중하면서 기법만 강화"하는 교
 - 처방 톤: 권고형 ("~하는 것이 바람직하다", "~하는 편이 효과적이다")
 - 중요도 상위 3개 항목에는 genre_fix 필드 추가 (장르 재미 복구와 어떻게 연결되는지)
 - 모든 항목에 preserve_note 필드 추가: 해당 시퀀스에서 작가가 이미 잘 쓴 요소(디테일, 이미지, 리듬, 행동 묘사, 인물의 선택 등)를 명시하라. Moon은 이 요소를 반드시 보존해야 한다.
+- 모든 항목에 axis 필드 추가: 이 처방이 무엇을 고치는지 "정서/구조" | "코미디" | "복합" 중 하나로 분류
+- 삭제·축약을 포함하는 처방에는 replace_with 필드를 반드시 채운다 (그 자리를 무엇으로 채우는지).
+  대체 지정 없는 삭제는 그 구간을 정적으로 비운다. 빈 replace_with는 무효 처방으로 간주한다.
 - 오프닝 시퀀스(Seq 1)에는 반드시 opening_note 필드 추가: 오프닝 기법·도파민 관점에서 이 씬이 무엇을 유지해야 하고 무엇을 강화해야 하는지.
 
-[Dialogue Washing — 4축 분석]
+[Dialogue Washing — 기본 3축 + 개선 제안]
 ① 캐릭터 적합성 (Character Voice): 인물별 어휘/문체/말투 적합성
 ② 서브텍스트 (Subtext): 표면↔이면 감정 충돌
 ③ 행동 구동 (Action-Driven): 장면 추진력
-④ 개선 제안 (Rewrite Suggestion): ①②③ 동시 해결
+→ 개선 제안 (Rewrite Suggestion): 위 축의 문제를 동시 해결하는 AFTER 문장
+※ 장르 프로파일이 적용된 경우 ④ 이후 번호는 위 [대사축 확장] 블록의 장르 전용 축에 배정된다.
+  개선 제안은 축이 아니라 결과물이므로 번호를 붙이지 않는다.
 
 [JSON 출력 스키마]
 {{
-  "opening_rx": {{
+{profile_schema}  "opening_rx": {{
     "respect_intent": true,
     "intent_kept_technique": "작가의 원래 의도를 유지하는 기법 코드 (또는 기법 전환이 필요할 때 새 기법 코드)",
     "switch_reason": "기법 전환이 필요한 경우에만 이유 2줄 / 유지면 빈 문자열",
@@ -763,8 +1323,10 @@ SHIHO는 "작가의 원래 의도를 존중하면서 기법만 강화"하는 교
       "seq": "Seq 1",
       "label": "잠복 → 발각",
       "problem_types": ["대립/압박 약함"],
+      "axis": "정서/구조 또는 코미디 또는 복합",
       "diagnosis": "진단 2문장",
       "prescription": "처방 2문장",
+      "replace_with": "삭제·축약이 포함될 때 그 자리를 채울 비트의 성격 (해당 없으면 빈 문자열)",
       "risk": "이 수정 시 우려점 1문장",
       "preserve_note": "이 시퀀스에서 보존해야 할 원본 강점 (디테일/이미지/리듬/행동/선택)",
       "opening_note": "오프닝 시퀀스(Seq 1)에만 기입: 오프닝 기법·도파민 관점에서 유지할 것/강화할 것",
@@ -777,7 +1339,7 @@ SHIHO는 "작가의 원래 의도를 존중하면서 기법만 강화"하는 교
     "axis_scores": {{
       "character_voice": 5,
       "subtext": 6,
-      "action_driven": 7
+      "action_driven": 7{extra_axis_json}
     }},
     "issues": [
       {{
@@ -908,6 +1470,57 @@ def build_rewrite_prompt(script_text: str, analysis: dict, washing: dict) -> str
     
     recovery_direction = genre_recovery.get("overall_direction", "")
 
+    # ── 장르 정밀 진단 프로파일 (v2.3) ──
+    profile_res = resolve_genre_profile_from_analysis(analysis)
+    protected_block = summarize_protected_assets(analysis)
+    genre_axes_summary = summarize_genre_axes(analysis.get("genre_compliance", {}))
+
+    # SHIHO의 장르 정밀축 처방 → MOON 지시로 전환
+    gax_rx = washing.get("genre_axis_rx", [])
+    gax_rx = gax_rx if isinstance(gax_rx, list) else []
+    gax_lines = []
+    for r in gax_rx[:8]:
+        if not isinstance(r, dict):
+            continue
+        line = (f"  [{r.get('axis_code','')}] {r.get('axis_name','')} — 대상: {r.get('target','')}\n"
+                f"    처방: {r.get('prescription','')}")
+        if r.get("replace_with"):
+            line += f"\n    대체 지정: {r.get('replace_with','')}"
+        if r.get("expected_effect"):
+            line += f"\n    기대 효과: {r.get('expected_effect','')}"
+        gax_lines.append(line)
+    genre_axis_rx_text = ("[장르 정밀축 처방 — 반드시 씬 안에서 구현할 것]\n" + "\n".join(gax_lines)) if gax_lines else ""
+
+    # 삭제·축약 처방의 대체 지정 목록 (빈 자리 방지)
+    replace_lines = []
+    for r in washing_table[:10]:
+        if isinstance(r, dict) and str(r.get("replace_with", "")).strip():
+            replace_lines.append(f"  [{r.get('seq','')}] 삭제/축약 자리 → {r.get('replace_with','')}")
+    replace_text = ("[삭제·축약 자리의 대체 지정 — 비워두면 실패]\n" + "\n".join(replace_lines)) if replace_lines else ""
+
+    # 프로파일별 리라이트 추가 규칙
+    profile_rule_block = ""
+    if profile_res.get("applied") and profile_res.get("profile"):
+        p = profile_res["profile"]
+        th = p.get("thresholds", {})
+        fails = "\n".join([f"  {i+1}. {f}" for i, f in enumerate(p.get("fails", []))])
+        profile_rule_block = f"""
+F. {p.get('genre_label','')} 전용 리라이트 규칙 (profile_id: {p.get('profile_id','')})
+1. 장르 본질: {p.get('core','')}
+2. 3막(후반) 씬을 리라이트할 때 웃음을 버리지 마라.
+   3막 웃음 밀도는 1막의 {int(float(th.get('act3_humor_retention_min', 0.7))*100)}% 이상을 유지해야 한다.
+   감정 정점에서 웃음을 빼는 것이 이 장르의 대표적 실패다.
+3. 웃음은 문장 끝에서 터진다. 펀치 단어를 대사 말미에 두고, 그 뒤에 설명을 붙이지 마라.
+4. 웃음을 의도한 대사에는 추상어 대신 구체적 수치·고유명사를 쓴다.
+5. 대화 씬은 시작과 끝의 지위 관계가 달라져야 한다. 일방적 우위가 유지되는 대화는 웃기지 않는다.
+6. 웃음의 원인은 주인공의 선택이어야 한다. 주인공이 웃긴 일을 당하기만 하면 실패다.
+7. 러닝개그를 회수할 때는 설치된 값(숫자·고유명사)을 그대로 써야 한다. 값이 달라지면 개그가 무너진다.
+8. 삭제 처방을 이행할 때는 그 자리를 반드시 대체 비트로 채운다. 조용히 비우지 마라.
+
+이 장르의 실패 패턴 (이것을 하면 실패):
+{fails}
+"""
+
     return f"""{SYSTEM_PROMPT}
 
 당신은 MOON — 세계 최고 수준의 Senior Screenwriter이다.
@@ -963,6 +1576,14 @@ DNA 시그니처: {dna['dna_signature']}
 4. "자극만 있고 도파민 없음" 패턴은 반드시 피한다.
    - 살인/폭력/섹스가 원본에 있어도, 그 자극에 도파민(호기심/긴장/감정 울림)을 겹쳐 설계한다.
 5. 복합 장르일 경우 본질 장르 DNA로 오프닝을 연다.
+
+{protected_block}
+
+{genre_axes_summary}
+
+{genre_axis_rx_text}
+
+{replace_text}
 
 [SHIHO 진단 결과 — 씬 선택 근거]
 {problems_text}
@@ -1033,7 +1654,9 @@ E. 리라이트 실패 패턴 (이것을 하면 실패)
 4. 여러 단락의 리듬을 하나의 평면으로 합치는 것.
 5. 감정을 행동 대신 형용사/부사로 설명하는 것 ("슬프게", "떨리는 손으로").
 6. 원본에 없는 감정 표현을 추가하는 것 ("눈물이 흐른다", "손이 떨린다" 등 클리셰).
-
+7. 보호 자산(Protected Assets)으로 지정된 요소를 삭제·약화시키는 것.
+   이 목록은 CHRIS가 "잘 작동한다"고 판정한 자산이다. 손대면 그 자체로 실패다.
+{profile_rule_block}
 [씬 헤더 규칙]
 수정씬: S#5(기존 S#12 수정)
 신규씬: S#5(기존 S#13과 S#14 사이 신규)

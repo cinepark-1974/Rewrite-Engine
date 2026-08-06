@@ -1,0 +1,221 @@
+{
+  "profile_id": "romantic_comedy",
+  "genre_label": "로맨틱 코미디",
+  "schema_version": "1.0",
+  "updated_at": "2026-08-06",
+  "aliases": [
+    "로맨틱 코미디",
+    "로맨틱코미디",
+    "로맨틱/코미디",
+    "로맨스 코미디",
+    "로맨스코미디",
+    "로맨스/코미디",
+    "코미디/로맨스",
+    "멜로 코미디",
+    "멜로코미디",
+    "멜로/코미디",
+    "코미디/멜로",
+    "로코",
+    "romantic comedy",
+    "rom-com",
+    "romcom",
+    "rom com"
+  ],
+  "primary_genre_key": "코미디",
+  "base_genre_keys": ["코미디", "멜로/로맨스"],
+  "opening_dna_key": "코미디",
+  "core": "로맨스는 포장, 코미디는 본질. 감정의 지연(로맨스)이 웃음의 엔진(코미디)을 통해 굴러가야 한다. 웃음이 멈추면 로코는 멜로로 착지한다.",
+  "genre_fun": "관객이 두 사람의 어긋남에 웃으면서 동시에 응원하게 되는 것 — 웃음과 갈망이 같은 장면에서 겹칠 때 로코의 재미가 터진다",
+
+  "diagnostic_axes": [
+    {
+      "code": "G1",
+      "name": "웃음 밀도 / 무웃음 구간 (Laugh Gap)",
+      "question": "웃음 포인트가 충분히 배치되어 있고, 연속으로 조용한 구간이 지나치게 길지 않은가",
+      "measure": "웃음 포인트가 배치된 씬을 표시하고, 연속으로 웃음이 없는 최장 구간의 길이와 위치를 산출한다",
+      "metric_keys": [
+        "laugh_points_total",
+        "laugh_scene_ratio",
+        "max_laugh_gap_scenes",
+        "gap_location"
+      ],
+      "judge": [
+        "최장 무웃음 구간 8씬 초과 → High",
+        "최장 무웃음 구간 5~8씬 → Medium",
+        "웃음 포함 씬 비율 45% 미만 → 최소 Medium"
+      ]
+    },
+    {
+      "code": "G2",
+      "name": "3막 유머 유지율 (Act3 Humor Retention)",
+      "question": "감정 정점이 다가올수록 작가가 웃음을 버리지 않았는가",
+      "measure": "1막 웃음 밀도 대비 3막 웃음 밀도 비율을 산출한다",
+      "metric_keys": [
+        "act1_laugh_density",
+        "act3_laugh_density",
+        "retention_ratio",
+        "drop_point"
+      ],
+      "judge": [
+        "3막 밀도가 1막의 60% 미만 → High",
+        "60~70% → Medium",
+        "70% 이상 → Low",
+        "로맨틱 코미디의 가장 흔한 실패 패턴은 3막에서 정서로 도망가는 것이다"
+      ]
+    },
+    {
+      "code": "G3",
+      "name": "코미디 셋피스 배치 (Set-piece Placement)",
+      "question": "씬 전체가 웃음을 목적으로 설계된 큰 장면이 각 막에 배치되어 있는가",
+      "measure": "셋피스(예고편에 들어갈 규모의 코믹 장면) 개수와 막별 분포를 산출한다. 대사 한 줄의 웃음과는 층위가 다르다",
+      "metric_keys": [
+        "setpiece_total",
+        "act1_count",
+        "act2_count",
+        "act3_count",
+        "setpiece_list"
+      ],
+      "judge": [
+        "총 3개 미만 → High",
+        "3막 셋피스 0개 → High",
+        "권장 배치: 1막 1개(전제의 즐거움 선언) / 2막 2~3개(Fun & Games 집중) / 3막 1개(클라이맥스 직전 또는 클라이맥스 자체)"
+      ]
+    },
+    {
+      "code": "G4",
+      "name": "웃음 출처 분포 (Laugh Source Mix)",
+      "question": "한 종류의 웃음만 반복되어 관객이 패턴을 학습해버리지 않았는가",
+      "measure": "웃음을 6개 카테고리로 분류하고 비율을 산출한다",
+      "categories": {
+        "C1": "상황 코미디 — 인물이 처한 상황 자체가 웃김",
+        "C2": "물리 코미디 — 행동·동작·신체",
+        "C3": "캐릭터 결함 — 인물의 고정된 결함에서 반복 발생",
+        "C4": "지위 역전 — 위아래가 뒤집히는 순간",
+        "C5": "러닝개그 — 설치된 반복 요소의 변주",
+        "C6": "언어유희 — 말장난·오해·전문용어 전용"
+      },
+      "metric_keys": [
+        "distribution",
+        "dominant_category",
+        "dominant_ratio",
+        "missing_categories"
+      ],
+      "judge": [
+        "단일 카테고리가 60% 초과 → High",
+        "단일 카테고리가 50~60% → Medium",
+        "C2(물리 코미디)가 전무하면 별도 지적"
+      ]
+    },
+    {
+      "code": "G5",
+      "name": "러닝개그 생애주기 (Running Gag Lifecycle)",
+      "question": "반복 요소가 설치 → 변주 → 회수의 생애주기를 완주하는가, 그리고 회수 시점의 값이 설치된 값과 일치하는가",
+      "measure": "3회 이상 등장하는 반복 요소를 추출해 각각 설치/변주/회수 단계를 판정하고, 수치·고유명사가 걸린 개그는 값의 일관성을 대조한다",
+      "metric_keys": [
+        "gag_count",
+        "dead_gags",
+        "unpaid_gags",
+        "inconsistent_gags"
+      ],
+      "judge": [
+        "변주 없이 동일 형태로 3회 이상 반복 → 사망 판정, High",
+        "설치는 있으나 회수 없음 → Medium",
+        "회수 시점의 값이 설치된 값과 불일치 → High (일관성 파괴). 예: 설치 252번 → 회수 250번"
+      ]
+    },
+    {
+      "code": "G6",
+      "name": "주인공의 코믹 능동성 (Comic Agency)",
+      "question": "주인공이 웃긴 일을 당하는 사람인가, 웃긴 결정을 하는 사람인가",
+      "measure": "웃음이 발생한 씬에서 그 웃음의 원인이 주인공의 선택인지 피동적 상황인지 분류한다. 보조로 거짓말·오해 엔진의 압력 곡선(설치 → 발각 위험 상승 → 폭발)을 산출한다",
+      "metric_keys": [
+        "choice_driven_ratio",
+        "act2_choice_driven_ratio",
+        "lie_engine",
+        "pressure_curve"
+      ],
+      "judge": [
+        "주인공 선택 기인 웃음 50% 미만 → High (특히 2막에서)",
+        "거짓말·오해 엔진의 압력 곡선이 평평하면 2막 늘어짐으로 판정",
+        "수동적 주인공은 코미디를 생성하지 못한다"
+      ]
+    }
+  ],
+
+  "dialogue_axes": [
+    {
+      "code": "④",
+      "key": "comic_timing",
+      "name": "코믹 타이밍 (Comic Timing)",
+      "principle": "웃음은 문장의 끝에서 터진다. 펀치 단어가 문장 중간에 있으면 죽는다",
+      "check": "펀치라인이 문장 말미에 위치하는가. 웃음 대사 뒤에 불필요한 설명이 붙지 않았는가",
+      "example_weak": "태양: 찜도 0이에요, 네이버 예약에.",
+      "example_strong": "태양: 네이버 예약에 찜하기 있잖아요. 그것도 0이에요."
+    },
+    {
+      "code": "⑤",
+      "key": "comic_specificity",
+      "name": "코믹 구체성 (Comic Specificity)",
+      "principle": "추상어는 웃기지 않는다. 숫자와 고유명사가 웃긴다",
+      "check": "웃음을 의도한 대사에 구체적 수치·고유명사·브랜드가 포함되어 있는가",
+      "example_weak": "민준: 결혼식 많이 했지.",
+      "example_strong": "민준: 252번이야."
+    },
+    {
+      "code": "⑥",
+      "key": "status_dynamics",
+      "name": "지위 관계 (Status Dynamics)",
+      "principle": "모든 코믹 대사 교환에는 위와 아래가 있다. 웃음은 그 위계가 흔들리거나 뒤집힐 때 발생한다",
+      "check": "씬 시작 시점의 지위 관계가 씬 종료 시점에 유지되는가, 역전되는가. 역전이 전혀 없는 대화 씬이 연속되면 경고",
+      "example_weak": "처음부터 끝까지 한쪽이 일방적으로 우위인 대화",
+      "example_strong": "전문가로 등장한 인물이 씬 끝에서 아마추어가 되는 대화"
+    }
+  ],
+
+  "thresholds": {
+    "laugh_points_per_100_scenes_min": 60,
+    "laugh_points_per_100_scenes_max": 80,
+    "laugh_scene_ratio_min": 0.45,
+    "max_laugh_gap_scenes": 5,
+    "laugh_gap_high_threshold": 8,
+    "act3_humor_retention_min": 0.70,
+    "act3_humor_retention_high": 0.60,
+    "setpiece_min_total": 3,
+    "setpiece_min_act3": 1,
+    "single_category_max_ratio": 0.50,
+    "single_category_high_ratio": 0.60,
+    "comic_agency_min_ratio": 0.50,
+    "comedy_prescription_min_ratio": 0.30
+  },
+
+  "must_have": [
+    "주인공의 코믹 결함이 1막 10분 내 행동으로 노출",
+    "두 인물의 목표가 정면 충돌 (제로섬)",
+    "3막에 코미디 셋피스 최소 1개",
+    "거짓말·오해 엔진의 설치와 발각 시점 명시",
+    "러닝개그가 회수 시점에 설치된 값과 일치"
+  ],
+
+  "fails": [
+    "3막에서 웃음을 버리고 서정 멜로로 착지",
+    "언어유희(C6) 한 종류에만 편중",
+    "물리 코미디 부재로 시각적 웃음이 없음",
+    "삭제 처방으로 후반이 정적으로 비어버림",
+    "러닝개그를 설치한 작가가 스스로 그 규칙을 깨는 것"
+  ],
+
+  "prescription_balance": {
+    "comedy_min_ratio": 0.30,
+    "retry_on_fail": true,
+    "rule": "장르가 로맨틱 코미디일 때 SHIHO 처방(시퀀스 처방 + 각색 제안) 중 코미디 관련 항목이 30% 이상이어야 한다. 미달 시 처방을 재생성한다.",
+    "deletion_rule": "삭제 처방에는 반드시 대체 비트의 성격을 지정한다(replace_with). 무엇으로 대체하는지 없는 삭제 처방은 후반을 정적으로 비운다."
+  },
+
+  "protected_asset_rule": {
+    "min_comedy_assets": 1,
+    "rule": "CHRIS의 '유지할 강점'에 웃음 자산(가장 잘 작동하는 코믹 씬 / 살아있는 러닝개그 / 효과적인 캐릭터 결함)을 최소 1개 포함한다. 이 항목은 protected_assets로 전달되어 다음 단계의 수정 금지 대상이 된다.",
+    "kinds": ["코미디", "구조", "모티프", "캐릭터", "로그라인"]
+  },
+
+  "reference_works": []
+}

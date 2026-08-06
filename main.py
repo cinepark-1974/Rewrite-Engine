@@ -5,10 +5,14 @@ import json, re, html, io
 import plotly.express as px
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from writer_link import parse_writer_session, summarize_writer_ref
 from prompt import (
     SYSTEM_PROMPT, GENRE_RULES,
     build_analysis_prompt, build_doctoring_prompt, build_rewrite_prompt,
-    get_report_filename
+    get_report_filename,
+    # v2.3 — 장르 정밀 진단 프로파일
+    resolve_genre_profile_from_analysis, check_prescription_balance,
+    get_profile_load_error, list_genre_profiles,
 )
 
 # =================================================================
@@ -25,6 +29,7 @@ for k, v in {
     "analysis": None,
     "washing": None,
     "rewriting": None,
+    "writer_ref": None,
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -555,9 +560,9 @@ def extract_text(uploaded_file):
 # =================================================================
 # [4] BLUE — 분석 비서 (prompt.py 빌더 사용)
 # =================================================================
-def run_blue(text, client):
+def run_blue(text, client, writer_ref=None):
     from prompt import SYSTEM_PROMPT
-    prompt = build_analysis_prompt(text)
+    prompt = build_analysis_prompt(text, writer_ref=writer_ref)
     # SYSTEM_PROMPT가 user 메시지 안에 포함되어 있으므로 제거 후 system으로 분리
     user_prompt = prompt.replace(SYSTEM_PROMPT, '').strip()
     raw = call_claude(client, user_prompt, max_tokens=12000, system=SYSTEM_PROMPT)
@@ -573,6 +578,50 @@ def run_blue(text, client):
         s.get('structure', 0) * 0.3 + s.get('hero', 0) * 0.3 +
         s.get('concept', 0) * 0.2 + s.get('genre', 0) * 0.2, 1
     )}
+
+    # ── v2.3: 장르 프로파일 확정 (서버 측 해석을 최종 권위로 삼는다) ──
+    # 모든 진단 산출물에 실제 적용된 프로파일 ID와 source를 명시하고,
+    # 폴백이 발생하면 조용히 넘어가지 않고 경고를 띄운다.
+    try:
+        res = resolve_genre_profile_from_analysis(data)
+        chris_note = ''
+        chris_gp = data.get('genre_profile', {})
+        if isinstance(chris_gp, dict):
+            chris_note = str(chris_gp.get('note', ''))
+        data['genre_profile'] = {
+            'applied':     res.get('applied', False),
+            'profile_id':  res.get('profile_id', ''),
+            'genre_label': res.get('genre_label', ''),
+            'source':      res.get('source', 'fallback'),
+            'genre_key':   res.get('genre_key', ''),
+            'note':        chris_note,
+        }
+
+        load_err = get_profile_load_error()
+        if load_err:
+            st.warning(f"⚠️ 장르 프로파일 로드 경고 — {load_err}")
+
+        if res.get('applied'):
+            gc = data.get('genre_compliance', {})
+            gc = gc if isinstance(gc, dict) else {}
+            ga = gc.get('genre_axes', {})
+            axes = ga.get('axes', []) if isinstance(ga, dict) else []
+            if not axes:
+                st.warning(
+                    f"⚠️ '{res.get('genre_label','')}' 프로파일이 적용되는 장르인데 "
+                    f"하위 진단축(G1~) 결과가 비어 있습니다. 재분석을 권합니다."
+                )
+            else:
+                if isinstance(ga, dict) and not ga.get('profile_id'):
+                    ga['profile_id'] = res.get('profile_id', '')
+        else:
+            st.info(
+                f"ℹ️ 장르 '{res.get('genre_label','')}'에 대한 정밀 진단 프로파일이 없어 "
+                f"기본 8장르 Rule Pack('{res.get('genre_key','')}')으로 진단했습니다. (source: fallback)"
+            )
+    except Exception as e:
+        st.caption(f"⚠️ 장르 프로파일 해석 생략: {type(e).__name__}")
+
     return data
 
 def _run_blue_OLD_UNUSED(text, client):
@@ -647,7 +696,45 @@ def run_jean(text, analysis, client):
     prompt = build_doctoring_prompt(text, analysis)
     user_prompt = prompt.replace(SYSTEM_PROMPT, '').strip()
     raw = call_claude(client, user_prompt, max_tokens=12000, system=SYSTEM_PROMPT)
-    return parse_json(raw)
+    data = parse_json(raw)
+    if not data:
+        return data
+
+    # ── v2.3: 처방 균형 게이트 ──
+    # 장르 프로파일이 있는 작품에서 코미디(장르 고유) 처방이 하한 미달이거나
+    # 삭제 처방에 대체 지정이 없으면 1회 재생성한다.
+    try:
+        gate = check_prescription_balance(analysis, data)
+        if gate:
+            data['axis_gate'] = gate
+            if not gate.get('passed') and gate.get('retry_note'):
+                st.caption(
+                    f"⚖️ 처방 균형 게이트 미달 (장르 처방 {gate['ratio']*100:.0f}% / 하한 "
+                    f"{gate['min_ratio']*100:.0f}%) — 처방을 1회 재생성합니다."
+                )
+                retry_prompt = build_doctoring_prompt(text, analysis, retry_note=gate['retry_note'])
+                retry_user = retry_prompt.replace(SYSTEM_PROMPT, '').strip()
+                raw2 = call_claude(client, retry_user, max_tokens=12000, system=SYSTEM_PROMPT)
+                data2 = parse_json(raw2) if raw2 else None
+                if data2 and data2.get('washing_table'):
+                    gate2 = check_prescription_balance(analysis, data2)
+                    # 재생성 결과가 더 나으면 채택
+                    if gate2 and (gate2.get('passed') or gate2.get('ratio', 0) > gate.get('ratio', 0)):
+                        gate2['retried'] = True
+                        data2['axis_gate'] = gate2
+                        data = data2
+                    else:
+                        gate['retried'] = True
+                        gate['retry_result'] = 'no_improvement'
+                        data['axis_gate'] = gate
+                else:
+                    gate['retried'] = True
+                    gate['retry_result'] = 'retry_failed'
+                    data['axis_gate'] = gate
+    except Exception as e:
+        st.caption(f"⚠️ 처방 균형 게이트 생략: {type(e).__name__}")
+
+    return data
 
 def _run_jean_OLD_UNUSED(text, analysis, client):
     prompt = f"""당신은 글로벌 OTT와 극장 영화 양쪽에서 검증된 세계 최고의 쇼러너(Showrunner)입니다.
@@ -1532,6 +1619,390 @@ def render_analysis(data):
                 </div>
             </div>""", unsafe_allow_html=True)
 
+    # ═══════════════════════════════════════════════════════════════
+    # 8-D. 장르 정밀 진단축 (v2.3 신규 — 장르 프로파일 적용 시에만)
+    # ═══════════════════════════════════════════════════════════════
+    render_genre_axes(data)
+
+    # ═══════════════════════════════════════════════════════════════
+    # 8-E. 보호 자산 (v2.3 신규)
+    # ═══════════════════════════════════════════════════════════════
+    render_protected_assets(data)
+
+
+SEVERITY_STYLE = {
+    'High':   ('#FFF3EE', '#FF6432', '#CC3300', '심각'),
+    'Medium': ('#FFFBE6', '#FFCB05', '#B8860B', '주의'),
+    'Low':    ('#EDFAF3', '#2EC484', '#1A7A50', '양호'),
+}
+
+
+def _severity_style(sev):
+    """심각도 문자열 → (배경, 테두리, 글자색, 한글라벨). 미지정은 회색."""
+    key = str(sev or '').strip().capitalize()
+    if key in SEVERITY_STYLE:
+        return SEVERITY_STYLE[key]
+    return ('#F4F5F9', '#94A3B8', '#4A5568', str(sev or '-'))
+
+
+def render_genre_axes(data):
+    """8-D. 장르 프로파일 하위 진단축 (G1~) 렌더링"""
+    genre = data.get('genre_compliance', {})
+    genre = genre if isinstance(genre, dict) else {}
+    ga = genre.get('genre_axes', {})
+    if not isinstance(ga, dict):
+        return
+    axes = ga.get('axes', [])
+    axes = [a for a in axes if isinstance(a, dict)] if isinstance(axes, list) else []
+
+    gp = data.get('genre_profile', {})
+    gp = gp if isinstance(gp, dict) else {}
+    profile_label = safe(gp.get('genre_label', '') or ga.get('profile_id', ''))
+    profile_id = safe(gp.get('profile_id', '') or ga.get('profile_id', ''))
+    source = safe(gp.get('source', ''))
+
+    # 프로파일 미적용 — 폴백 사실만 짧게 고지하고 종료
+    if not axes:
+        if gp and not gp.get('applied'):
+            fb_html = (
+                '<div class="report-card">'
+                '<h3>8-D. 장르 정밀 진단축</h3>'
+                '<div style="background:#F4F5F9;border-left:3px solid #94A3B8;padding:12px 14px;border-radius:8px;font-size:0.86rem;color:#4A5568;line-height:1.7;">'
+                f'이 장르에는 등록된 정밀 진단 프로파일이 없어 기본 8장르 Rule Pack(<strong>{safe(gp.get("genre_key",""))}</strong>)으로 진단했습니다. '
+                f'(source: {source or "fallback"})'
+                '</div></div>'
+            )
+            st.markdown(fb_html, unsafe_allow_html=True)
+        return
+
+    # 헤더
+    high_n = len([a for a in axes if str(a.get('severity', '')).capitalize() == 'High'])
+    head_html = (
+        '<div class="report-card">'
+        '<h3>8-D. 장르 정밀 진단축 (Genre Axes)</h3>'
+        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">'
+        f'<span style="background:#191970;color:#FFCB05;padding:5px 13px;border-radius:10px;font-weight:800;font-size:0.82rem;">{profile_label}</span>'
+        f'<span style="background:#EEF0FA;color:#191970;border:1px solid #C5CBE8;padding:4px 11px;border-radius:20px;font-size:0.72rem;font-weight:700;">profile_id: {profile_id}</span>'
+        f'<span style="background:#EEF0FA;color:#191970;border:1px solid #C5CBE8;padding:4px 11px;border-radius:20px;font-size:0.72rem;font-weight:700;">source: {source or "lookup"}</span>'
+        f'<span style="background:#FFF3EE;color:#CC3300;border:1px solid #FF6432;padding:4px 11px;border-radius:20px;font-size:0.72rem;font-weight:700;">심각 {high_n}개</span>'
+        '</div></div>'
+    )
+    st.markdown(head_html, unsafe_allow_html=True)
+
+    # 축별 카드 — 카드 단위로 짧게 분리
+    for a in axes:
+        code = safe(a.get('code', ''))
+        name = safe(a.get('name', ''))
+        sev = a.get('severity', '')
+        bg, bd, fc, sev_ko = _severity_style(sev)
+        try:
+            score = int(float(a.get('score', 0)))
+        except Exception:
+            score = 0
+        bar_color = '#2EC484' if score >= 7 else ('#FFCB05' if score >= 4 else '#FF6432')
+
+        card_head = (
+            f'<div style="background:#FFFFFF;border:1px solid #E6E9EF;border-left:4px solid {bd};border-radius:10px 10px 0 0;padding:13px 16px 9px;margin-top:10px;">'
+            f'<span style="background:#191970;color:#FFFFFF !important;padding:2px 9px;border-radius:4px;font-weight:900;font-size:0.72rem;">{code}</span>'
+            f'<span style="font-weight:800;margin-left:9px;color:#191970;font-size:0.92rem;">{name}</span>'
+            f'<span style="background:{bg};color:{fc};border:1px solid {bd};padding:2px 9px;border-radius:20px;font-size:0.68rem;font-weight:800;margin-left:9px;">{safe(sev_ko)}</span>'
+            f'<span style="float:right;font-weight:900;color:{bar_color};font-size:0.92rem;">{score}/10</span>'
+            '</div>'
+        )
+        st.markdown(card_head, unsafe_allow_html=True)
+
+        # 실측 지표 — st.columns 네이티브 사용 (CSS flex 회피)
+        metrics = a.get('metrics', {})
+        if isinstance(metrics, dict) and metrics:
+            items = [(str(k), str(v)) for k, v in metrics.items()][:6]
+            cols = st.columns(min(len(items), 3))
+            for i, (k, v) in enumerate(items):
+                with cols[i % len(cols)]:
+                    m_html = (
+                        '<div style="background:#F8F9FF;border:1px solid #E6E9EF;border-radius:8px;padding:9px 11px;margin-bottom:7px;">'
+                        f'<div style="font-size:0.66rem;font-weight:800;color:#6B7280;margin-bottom:3px;">{safe(k)}</div>'
+                        f'<div style="font-size:0.86rem;font-weight:800;color:#191970;">{safe(v)}</div>'
+                        '</div>'
+                    )
+                    st.markdown(m_html, unsafe_allow_html=True)
+
+        finding = safe(a.get('finding', ''))
+        if finding:
+            f_html = (
+                f'<div style="background:{bg};border-left:3px solid {bd};padding:10px 13px;border-radius:6px;margin-bottom:7px;">'
+                f'<div style="font-size:0.68rem;font-weight:800;color:{fc};margin-bottom:4px;">🔍 진단</div>'
+                f'<div style="font-size:0.86rem;color:#191970;line-height:1.7;">{finding}</div>'
+                '</div>'
+            )
+            st.markdown(f_html, unsafe_allow_html=True)
+
+        hint = safe(a.get('prescription_hint', ''))
+        if hint:
+            h_html = (
+                '<div style="background:#EEF0FA;border-left:3px solid #191970;padding:10px 13px;border-radius:6px;margin-bottom:12px;">'
+                '<div style="font-size:0.68rem;font-weight:800;color:#191970;margin-bottom:4px;">💊 처방 방향 (SHIHO 인계)</div>'
+                f'<div style="font-size:0.86rem;color:#191970;line-height:1.7;">{hint}</div>'
+                '</div>'
+            )
+            st.markdown(h_html, unsafe_allow_html=True)
+
+    # 러닝개그 판정 테이블
+    gags = ga.get('running_gags', [])
+    gags = [g for g in gags if isinstance(g, dict)] if isinstance(gags, list) else []
+    if gags:
+        st.markdown(
+            '<div style="font-size:0.85rem;font-weight:800;color:#191970;margin:16px 0 8px;">🔁 러닝개그 생애주기 판정</div>',
+            unsafe_allow_html=True
+        )
+        for g in gags:
+            status = str(g.get('status', ''))
+            broken = status in ('사망', '값불일치', '회수실패')
+            g_bg = '#FFF3EE' if broken else '#EDFAF3'
+            g_bd = '#FF6432' if broken else '#2EC484'
+            g_fc = '#CC3300' if broken else '#1A7A50'
+            g_icon = '✗' if broken else '✓'
+            g_head = (
+                f'<div style="background:#FFFFFF;border:1px solid #E6E9EF;border-left:4px solid {g_bd};border-radius:10px 10px 0 0;padding:12px 15px 8px;margin-top:8px;">'
+                f'<span style="font-weight:800;color:#191970;font-size:0.9rem;">{safe(g.get("element",""))}</span>'
+                f'<span style="background:#EEF0FA;color:#191970;border:1px solid #C5CBE8;padding:2px 8px;border-radius:20px;font-size:0.68rem;font-weight:700;margin-left:8px;">{safe(g.get("occurrences",""))}회</span>'
+                f'<span style="background:{g_bg};color:{g_fc};border:1px solid {g_bd};padding:2px 9px;border-radius:20px;font-size:0.68rem;font-weight:800;margin-left:8px;">{g_icon} {safe(status)}</span>'
+                '</div>'
+            )
+            st.markdown(g_head, unsafe_allow_html=True)
+
+            c1, c2 = st.columns(2, gap="small")
+            with c1:
+                s_html = (
+                    '<div style="background:#F8F9FF;padding:10px;border-radius:8px;border-left:3px solid #191970;margin-bottom:7px;">'
+                    '<div style="font-size:0.66rem;font-weight:800;color:#191970;margin-bottom:4px;">설치 (Setup)</div>'
+                    f'<div style="font-size:0.84rem;color:#333;line-height:1.6;">{safe(g.get("setup",""))}</div>'
+                    '</div>'
+                )
+                st.markdown(s_html, unsafe_allow_html=True)
+            with c2:
+                p_html = (
+                    f'<div style="background:{g_bg};padding:10px;border-radius:8px;border-left:3px solid {g_bd};margin-bottom:7px;">'
+                    f'<div style="font-size:0.66rem;font-weight:800;color:{g_fc};margin-bottom:4px;">회수 (Payoff)</div>'
+                    f'<div style="font-size:0.84rem;color:#333;line-height:1.6;">{safe(g.get("payoff",""))}</div>'
+                    '</div>'
+                )
+                st.markdown(p_html, unsafe_allow_html=True)
+
+            note = safe(g.get('note', ''))
+            if note:
+                n_html = (
+                    '<div style="background:#FFFBE6;padding:9px 12px;border-radius:6px;border-left:3px solid #FFCB05;margin-bottom:12px;">'
+                    f'<div style="font-size:0.82rem;color:#191970;line-height:1.6;">변주: {safe(g.get("variation",""))} · {note}</div>'
+                    '</div>'
+                )
+                st.markdown(n_html, unsafe_allow_html=True)
+
+    breakdown = safe(ga.get('genre_score_breakdown', ''))
+    if breakdown:
+        b_html = (
+            '<div class="report-card" style="margin-top:-4px;">'
+            '<div style="background:#EEF0FA;padding:14px;border-radius:8px;line-height:1.8;color:#191970;">'
+            '<strong style="font-size:0.75rem;color:#191970;display:block;margin-bottom:6px;">📐 GENRE 축 점수 산출 근거</strong>'
+            f'{breakdown}</div></div>'
+        )
+        st.markdown(b_html, unsafe_allow_html=True)
+
+
+ASSET_KIND_COLOR = {
+    '코미디': '#B8860B', '구조': '#191970', '모티프': '#6B3FA0',
+    '캐릭터': '#1A7A50', '로그라인': '#CC3300',
+}
+
+
+def render_protected_assets(data):
+    """8-E. 보호 자산 — 다음 단계에서 삭제되면 안 되는 강점"""
+    pas = data.get('protected_assets', [])
+    if not isinstance(pas, list) or not pas:
+        return
+
+    st.markdown(
+        '<div class="report-card"><h3>8-E. 보호 자산 (Protected Assets)</h3>'
+        '<div style="font-size:0.83rem;color:#4A5568;line-height:1.7;">'
+        '이미 잘 작동하는 자산입니다. SHIHO 처방과 MOON 리라이트에서 수정·삭제 금지 대상으로 전달됩니다.'
+        '</div></div>',
+        unsafe_allow_html=True
+    )
+
+    for a in pas:
+        if isinstance(a, dict):
+            kind = str(a.get('kind', ''))
+            kc = ASSET_KIND_COLOR.get(kind, '#4A5568')
+            head = (
+                '<div style="background:#FFFFFF;border:1px solid #E6E9EF;border-left:4px solid #2EC484;border-radius:10px 10px 0 0;padding:12px 15px 8px;margin-top:9px;">'
+                f'<span style="background:{kc};color:#FFFFFF !important;padding:2px 9px;border-radius:4px;font-weight:800;font-size:0.68rem;">🔒 {safe(kind)}</span>'
+                f'<span style="font-weight:800;margin-left:9px;color:#191970;font-size:0.9rem;">{safe(a.get("asset",""))}</span>'
+                f'<span style="color:#6B7280;font-size:0.75rem;margin-left:8px;">{safe(a.get("where",""))}</span>'
+                '</div>'
+            )
+            st.markdown(head, unsafe_allow_html=True)
+
+            why = safe(a.get('why', ''))
+            if why:
+                w_html = (
+                    '<div style="background:#EDFAF3;padding:9px 12px;border-radius:6px;border-left:3px solid #2EC484;margin-bottom:6px;">'
+                    f'<div style="font-size:0.84rem;color:#191970;line-height:1.6;"><strong style="font-size:0.68rem;color:#1A7A50;">작동 이유:</strong> {why}</div>'
+                    '</div>'
+                )
+                st.markdown(w_html, unsafe_allow_html=True)
+
+            do_not = safe(a.get('do_not', ''))
+            if do_not:
+                d_html = (
+                    '<div style="background:#FFF5F5;padding:9px 12px;border-radius:6px;border-left:3px solid #FF6432;margin-bottom:12px;">'
+                    f'<div style="font-size:0.84rem;color:#191970;line-height:1.6;"><strong style="font-size:0.68rem;color:#CC3300;">금지:</strong> {do_not}</div>'
+                    '</div>'
+                )
+                st.markdown(d_html, unsafe_allow_html=True)
+        elif a:
+            st.markdown(
+                f'<div style="background:#EDFAF3;padding:9px 12px;border-radius:6px;border-left:3px solid #2EC484;margin:6px 0;font-size:0.86rem;color:#191970;">🔒 {safe(a)}</div>',
+                unsafe_allow_html=True
+            )
+
+
+def render_genre_axis_rx(data):
+    """9-A2. 장르 정밀축 처방 + 처방 균형 게이트 결과 (v2.3)"""
+    rx_list = data.get('genre_axis_rx', [])
+    rx_list = [r for r in rx_list if isinstance(r, dict)] if isinstance(rx_list, list) else []
+
+    dist = data.get('axis_distribution', {})
+    dist = dist if isinstance(dist, dict) else {}
+    gate = data.get('axis_gate', {})
+    gate = gate if isinstance(gate, dict) else {}
+
+    if not rx_list and not dist and not gate:
+        return
+
+    # ── 처방 균형 ──
+    if dist or gate:
+        # 서버 재계산(gate) 우선, 없으면 SHIHO 자기보고(dist)
+        try:
+            ratio = float(gate.get('ratio', dist.get('comedy_ratio', 0)) or 0)
+        except Exception:
+            ratio = 0.0
+        try:
+            gate_min = float(gate.get('min_ratio', dist.get('gate_min', 0.30)) or 0.30)
+        except Exception:
+            gate_min = 0.30
+        passed = bool(gate.get('passed', dist.get('gate_passed', ratio >= gate_min)))
+        comedy_n = gate.get('comedy_count', dist.get('comedy_count', 0))
+        total_n = gate.get('total_count', dist.get('total_count', 0))
+
+        pct = max(0, min(int(round(ratio * 100)), 100))
+        min_pct = max(0, min(int(round(gate_min * 100)), 100))
+        g_bg = '#EDFAF3' if passed else '#FFF3EE'
+        g_bd = '#2EC484' if passed else '#FF6432'
+        g_fc = '#1A7A50' if passed else '#CC3300'
+        g_label = '✓ 균형 통과' if passed else '✗ 장르 처방 부족'
+
+        head = (
+            '<div class="report-card">'
+            '<h3>9-A. 처방 균형 (Prescription Balance)</h3>'
+            '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">'
+            f'<span style="background:{g_bg};color:{g_fc};border:1px solid {g_bd};padding:5px 13px;border-radius:20px;font-weight:800;font-size:0.8rem;">{g_label}</span>'
+            f'<span style="background:#EEF0FA;color:#191970;border:1px solid #C5CBE8;padding:4px 11px;border-radius:20px;font-size:0.72rem;font-weight:700;">장르 처방 {comedy_n} / 전체 {total_n}</span>'
+            f'<span style="background:#EEF0FA;color:#191970;border:1px solid #C5CBE8;padding:4px 11px;border-radius:20px;font-size:0.72rem;font-weight:700;">하한 {min_pct}%</span>'
+            '</div></div>'
+        )
+        st.markdown(head, unsafe_allow_html=True)
+
+        bar = (
+            '<div style="background:#FFFFFF;border:1px solid #E6E9EF;border-radius:10px;padding:14px 16px;margin-top:-4px;margin-bottom:10px;">'
+            '<div style="background:#E6E9EF;border-radius:20px;height:14px;overflow:hidden;position:relative;">'
+            f'<div style="background:{g_bd};width:{pct}%;height:100%;border-radius:20px;"></div>'
+            f'<div style="position:absolute;top:0;left:{min_pct}%;width:2px;height:14px;background:#191970;"></div>'
+            '</div>'
+            f'<div style="font-size:0.74rem;color:#4A5568;margin-top:7px;">장르 고유 처방 비율 <strong style="color:{g_fc};">{pct}%</strong> · 세로선은 하한 {min_pct}%</div>'
+            '</div>'
+        )
+        st.markdown(bar, unsafe_allow_html=True)
+
+        if gate.get('retried'):
+            retry_msg = {
+                'no_improvement': '재생성했으나 개선되지 않아 첫 결과를 유지했습니다.',
+                'retry_failed': '재생성 응답을 해석하지 못해 첫 결과를 유지했습니다.',
+            }.get(str(gate.get('retry_result', '')), '게이트 미달로 처방을 1회 재생성했습니다.')
+            st.markdown(
+                f'<div style="background:#FFFBE6;border-left:3px solid #FFCB05;padding:9px 12px;border-radius:6px;margin-bottom:10px;font-size:0.83rem;color:#191970;">⚖️ {safe(retry_msg)}</div>',
+                unsafe_allow_html=True
+            )
+
+        missing = gate.get('missing_replace_with', [])
+        if isinstance(missing, list) and missing:
+            miss_txt = ', '.join([safe(str(m)) for m in missing if m])
+            st.markdown(
+                '<div style="background:#FFF5F5;border-left:3px solid #FF6432;padding:9px 12px;border-radius:6px;margin-bottom:10px;font-size:0.83rem;color:#191970;">'
+                f'⚠️ 삭제·축약 처방인데 대체 지정이 비어 있는 시퀀스: <strong>{miss_txt}</strong>. 그 자리가 정적으로 비워질 수 있습니다.'
+                '</div>',
+                unsafe_allow_html=True
+            )
+
+        note = safe(dist.get('note', ''))
+        if note:
+            st.markdown(
+                f'<div style="background:#EEF0FA;padding:12px 14px;border-radius:8px;margin-bottom:10px;font-size:0.86rem;color:#191970;line-height:1.7;">{note}</div>',
+                unsafe_allow_html=True
+            )
+
+        pa_note = safe(data.get('protected_assets_note', ''))
+        if pa_note:
+            st.markdown(
+                '<div style="background:#EDFAF3;border-left:3px solid #2EC484;padding:10px 13px;border-radius:6px;margin-bottom:10px;">'
+                '<strong style="font-size:0.68rem;color:#1A7A50;">🔒 보호 자산 준수:</strong> '
+                f'<span style="font-size:0.85rem;color:#191970;line-height:1.6;">{pa_note}</span></div>',
+                unsafe_allow_html=True
+            )
+
+    # ── 장르 정밀축 처방 카드 ──
+    if rx_list:
+        st.markdown(
+            '<div class="report-card"><h3>9-A2. 장르 정밀축 처방 (Genre Axis RX)</h3>'
+            '<div style="font-size:0.83rem;color:#4A5568;line-height:1.7;">'
+            'CHRIS가 하위 진단축에서 지적한 문제를 처방으로 전환한 항목입니다.'
+            '</div></div>',
+            unsafe_allow_html=True
+        )
+        for r in rx_list:
+            head = (
+                '<div style="background:#FFFFFF;border:1px solid #E6E9EF;border-left:4px solid #B8860B;border-radius:10px 10px 0 0;padding:12px 15px 8px;margin-top:9px;">'
+                f'<span style="background:#191970;color:#FFFFFF !important;padding:2px 9px;border-radius:4px;font-weight:900;font-size:0.7rem;">{safe(r.get("axis_code",""))}</span>'
+                f'<span style="font-weight:800;margin-left:9px;color:#191970;font-size:0.9rem;">{safe(r.get("axis_name",""))}</span>'
+                f'<span style="color:#6B7280;font-size:0.75rem;margin-left:8px;">{safe(r.get("target",""))}</span>'
+                '</div>'
+            )
+            st.markdown(head, unsafe_allow_html=True)
+
+            presc = safe(r.get('prescription', ''))
+            if presc:
+                st.markdown(
+                    '<div style="background:#FFFBE6;padding:11px 13px;border-radius:6px;border-left:3px solid #FFCB05;margin-bottom:7px;">'
+                    '<div style="font-size:0.68rem;font-weight:800;color:#B8860B;margin-bottom:4px;">💊 처방</div>'
+                    f'<div style="font-size:0.87rem;color:#191970;line-height:1.7;">{presc}</div></div>',
+                    unsafe_allow_html=True
+                )
+
+            rw = safe(r.get('replace_with', ''))
+            eff = safe(r.get('expected_effect', ''))
+            if rw:
+                st.markdown(
+                    '<div style="background:#EDFAF3;padding:9px 12px;border-radius:6px;border-left:3px solid #2EC484;margin-bottom:6px;">'
+                    '<strong style="font-size:0.68rem;color:#1A7A50;">🔄 대체 지정:</strong> '
+                    f'<span style="font-size:0.85rem;color:#191970;line-height:1.6;">{rw}</span></div>',
+                    unsafe_allow_html=True
+                )
+            if eff:
+                st.markdown(
+                    '<div style="background:#EEF0FA;padding:9px 12px;border-radius:6px;border-left:3px solid #191970;margin-bottom:12px;">'
+                    '<strong style="font-size:0.68rem;color:#191970;">🎯 기대 효과:</strong> '
+                    f'<span style="font-size:0.85rem;color:#191970;line-height:1.6;">{eff}</span></div>',
+                    unsafe_allow_html=True
+                )
+
 
 def render_washing(data):
     # ═══════════════════════════════════════════════════════════════
@@ -1658,12 +2129,28 @@ def render_washing(data):
         diagnosis    = safe(row.get('diagnosis', ''))
         prescription = safe(row.get('prescription', ''))
         opening_note = safe(row.get('opening_note', ''))
+        replace_with = safe(row.get('replace_with', ''))
 
-        # 카드 헤더 (seq 배지 + label) — 한 줄 HTML
+        # 처방 축 배지 (v2.3) — 정서/구조 · 코미디 · 복합
+        axis_raw = str(row.get('axis', '')).strip()
+        axis_badge = ''
+        if axis_raw:
+            a_bg, a_bd, a_fc = '#EEF0FA', '#C5CBE8', '#191970'
+            if axis_raw == '코미디':
+                a_bg, a_bd, a_fc = '#FFFBE6', '#FFCB05', '#B8860B'
+            elif axis_raw == '복합':
+                a_bg, a_bd, a_fc = '#F3EEFA', '#B79FE0', '#6B3FA0'
+            axis_badge = (
+                f'<span style="background:{a_bg};color:{a_fc};border:1px solid {a_bd};'
+                f'padding:2px 9px;border-radius:20px;font-size:0.66rem;font-weight:800;margin-left:8px;">{safe(axis_raw)}</span>'
+            )
+
+        # 카드 헤더 (seq 배지 + label + 축 배지) — 한 줄 HTML
         header_html = (
             '<div style="background:#FFFFFF;border:1px solid #E6E9EF;border-top-left-radius:10px;border-top-right-radius:10px;padding:14px 16px 8px;margin-top:10px;">'
             f'<span style="background:#191970;color:#FFFFFF !important;padding:2px 10px;border-radius:4px;font-weight:900;font-size:0.72rem;">{seq}</span>'
             f'<span style="font-weight:700;margin-left:10px;color:#191970;">{label}</span>'
+            f'{axis_badge}'
             '</div>'
         )
         st.markdown(header_html, unsafe_allow_html=True)
@@ -1697,6 +2184,19 @@ def render_washing(data):
             )
             st.markdown(pres_html, unsafe_allow_html=True)
 
+        # 대체 지정 (v2.3) — 삭제·축약 처방이 자리를 비우지 않도록
+        if replace_with:
+            rw_html = (
+                '<div style="background:#EDFAF3;border-left:3px solid #2EC484;padding:9px 12px;border-radius:6px;margin-top:-4px;margin-bottom:12px;">'
+                '<strong style="font-size:0.68rem;color:#1A7A50;">🔄 대체 지정:</strong> '
+                f'<span style="font-size:0.85rem;color:#191970;line-height:1.6;">{replace_with}</span>'
+                '</div>'
+            )
+            st.markdown(rw_html, unsafe_allow_html=True)
+
+    # 9-A2. 장르 정밀축 처방 + 처방 균형 (v2.3 신규)
+    render_genre_axis_rx(data)
+
     # 9-B. 대사 분석 (Dialogue Washing)
     da = data.get('dialogue_analysis', {})
     if da:
@@ -1724,6 +2224,34 @@ def render_washing(data):
         bar_st = mini_bar(st_, '#6B3FA0')
         bar_ad = mini_bar(ad, '#2EC484')
         overall_comment = safe(da.get('overall_comment',''))
+
+        # ── v2.3: 장르 전용 확장 대사축 (④⑤⑥) ──
+        EXT_AXES = [
+            ('comic_timing',      '④ 코믹 타이밍',  '펀치라인이 문장 말미에 있는가',      '#FF8A3D'),
+            ('comic_specificity', '⑤ 코믹 구체성',  '추상어 대신 수치·고유명사가 있는가',  '#E0561B'),
+            ('status_dynamics',   '⑥ 지위 관계',    '씬 시작과 끝의 위계가 흔들리는가',    '#B8860B'),
+        ]
+        ext_rows_html = ''
+        ext_badges_html = ''
+        ext_present = []
+        if isinstance(ax, dict):
+            for i, (key, label, criteria, color) in enumerate(EXT_AXES):
+                if key not in ax:
+                    continue
+                val = norm(ax.get(key, 0))
+                ext_present.append((label, criteria, val, color))
+                row_bg = '#FFFFFF' if i % 2 else '#F8F9FF'
+                ext_rows_html += (
+                    f'<tr style="background:{row_bg};border-bottom:1px solid #E6E9EF;">'
+                    f'<td style="padding:8px 12px;font-weight:800;color:#191970;font-size:0.82rem;">{label}</td>'
+                    f'<td style="padding:8px 12px;font-size:0.78rem;color:#191970;">{criteria}</td>'
+                    f'<td style="padding:8px 12px;">{mini_bar(val, color)}</td>'
+                    f'</tr>'
+                )
+                ext_badges_html += (
+                    f'<span style="background:#FFF3EE;color:#CC3300;border:1px solid #FF6432;'
+                    f'padding:3px 10px;border-radius:20px;font-size:0.72rem;font-weight:700;">{label}</span>'
+                )
         bar_final = (
             f'<div style="display:flex;align-items:center;gap:6px;">'
             f'<div style="flex:1;background:#C5CBE8;border-radius:10px;height:8px;overflow:hidden;">'
@@ -1731,17 +2259,20 @@ def render_washing(data):
             f'<span style="font-size:0.9rem;font-weight:950;color:{bar_color};">{score}/10</span></div>'
         )
 
-        # 헤더 + 4축 기준 태그
-        st.markdown("""
-        <div class="report-card">
-            <h3>9-B. 대사 워싱 (Dialogue Washing)</h3>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">
-                <span style="background:#EEF0FA;color:#191970;border:1px solid #C5CBE8;padding:3px 10px;border-radius:20px;font-size:0.72rem;font-weight:700;">① 캐릭터 적합성</span>
-                <span style="background:#EEF0FA;color:#191970;border:1px solid #C5CBE8;padding:3px 10px;border-radius:20px;font-size:0.72rem;font-weight:700;">② 서브텍스트</span>
-                <span style="background:#EEF0FA;color:#191970;border:1px solid #C5CBE8;padding:3px 10px;border-radius:20px;font-size:0.72rem;font-weight:700;">③ 행동/감정/관계 구동</span>
-                <span style="background:#FFFBE6;color:#B8860B;border:1px solid #FFE066;padding:3px 10px;border-radius:20px;font-size:0.72rem;font-weight:700;">④ 개선 제안</span>
-            </div>
-        </div>""", unsafe_allow_html=True)
+        # 헤더 + 평가축 배지 (기본 3축 + 장르 확장축 + 개선 제안)
+        badge_base = 'background:#EEF0FA;color:#191970;border:1px solid #C5CBE8;padding:3px 10px;border-radius:20px;font-size:0.72rem;font-weight:700;'
+        head_html = (
+            '<div class="report-card">'
+            '<h3>9-B. 대사 워싱 (Dialogue Washing)</h3>'
+            '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">'
+            f'<span style="{badge_base}">① 캐릭터 적합성</span>'
+            f'<span style="{badge_base}">② 서브텍스트</span>'
+            f'<span style="{badge_base}">③ 행동/감정/관계 구동</span>'
+            f'{ext_badges_html}'
+            '<span style="background:#FFFBE6;color:#B8860B;border:1px solid #FFE066;padding:3px 10px;border-radius:20px;font-size:0.72rem;font-weight:700;">→ 개선 제안</span>'
+            '</div></div>'
+        )
+        st.markdown(head_html, unsafe_allow_html=True)
 
         # 3축 점수 테이블 (별도 markdown)
         st.markdown(f"""
@@ -1768,6 +2299,7 @@ def render_washing(data):
                     <td style="padding:8px 12px;font-size:0.78rem;color:#191970;">장면 추진력, 정보전달 금지</td>
                     <td style="padding:8px 12px;">{bar_ad}</td>
                 </tr>
+                {ext_rows_html}
                 <tr style="background:#EEF0FA;">
                     <td colspan="2" style="padding:8px 12px;font-weight:900;color:#191970;font-size:0.88rem;">종합 대사 수준</td>
                     <td style="padding:8px 12px;">{bar_final}</td>
@@ -1803,6 +2335,9 @@ def render_washing(data):
                 '① 캐릭터 적합성': '#191970',
                 '② 서브텍스트':    '#6B3FA0',
                 '③ 행동/감정/관계':'#2EC484',
+                '④ 코믹 타이밍':   '#FF8A3D',
+                '⑤ 코믹 구체성':   '#E0561B',
+                '⑥ 지위 관계':     '#B8860B',
             }
             for issue in issues:
                 axis_label = safe(issue.get('axis', ''))
@@ -1836,7 +2371,7 @@ def render_washing(data):
                 with col_a:
                     good_html = (
                         '<div style="background:#EDFAF3;padding:11px;border-radius:8px;border-left:3px solid #2EC484;margin-bottom:8px;">'
-                        '<div style="font-size:0.68rem;font-weight:800;color:#1A7A50;margin-bottom:5px;">✅ ④ 개선 제안 (AFTER)</div>'
+                        '<div style="font-size:0.68rem;font-weight:800;color:#1A7A50;margin-bottom:5px;">✅ 개선 제안 (AFTER)</div>'
                         f'<div style="font-size:0.88rem;line-height:1.6;color:#333;font-family:\'Courier New\',monospace;">{good_text}</div>'
                         '</div>'
                     )
@@ -2135,8 +2670,11 @@ def export_diagnosis_json(item, level="shiho"):
         "beats":             item.get('beats', {}),
         "tension_data":      item.get('tension_data', []),
         "genre_compliance":  item.get('genre_compliance', {}),
+        # v2.3 — 장르 정밀 진단 프로파일
+        "genre_profile":     item.get('genre_profile', {}),
+        "protected_assets":  item.get('protected_assets', []),
     }
-    
+
     shiho_prescription = None
     if level in ("shiho", "full"):
         shiho_prescription = {
@@ -2145,6 +2683,11 @@ def export_diagnosis_json(item, level="shiho"):
             "suggestions":        item.get('suggestions', []),
             "opening_rx":         item.get('opening_rx', {}),
             "genre_fun_recovery": item.get('genre_fun_recovery', {}),
+            # v2.3 — 장르 정밀축 처방 + 균형 게이트
+            "genre_axis_rx":        item.get('genre_axis_rx', []),
+            "axis_distribution":    item.get('axis_distribution', {}),
+            "axis_gate":            item.get('axis_gate', {}),
+            "protected_assets_note": item.get('protected_assets_note', ''),
         }
     
     moon_rewrite = None
@@ -2158,9 +2701,9 @@ def export_diagnosis_json(item, level="shiho"):
         # ── 메타 정보 ──
         "title":            item.get('title', ''),
         "report_date":      datetime.now().strftime('%Y-%m-%d'),
-        "engine_version":   "Rewrite Engine v2.2",
-        "schema_version":   "1.0",
-        
+        "engine_version":   "Rewrite Engine v2.3",
+        "schema_version":   "1.1",
+
         # ── [A] Revise Engine v2.3 자동 흡수 키 (평면) ──
         "rewrite_suggestions": rewrite_suggestions,
         "add_suggestions":     add_suggestions,
@@ -2169,7 +2712,13 @@ def export_diagnosis_json(item, level="shiho"):
         "moon_market_direction":      moon_market_direction,
         "moon_genre_strengthening":   moon_genre_strengthening,
         "moon_unique_value":          moon_unique_value,
-        
+
+        # ── [A-2] v2.3 신규 평면 키 — 수정 금지 자산 / 장르 정밀축 ──
+        "protected_assets":    item.get('protected_assets', []),
+        "genre_axes":          (item.get('genre_compliance', {}) or {}).get('genre_axes', {}),
+        "genre_axis_rx":       item.get('genre_axis_rx', []) if level in ("shiho", "full") else [],
+        "axis_distribution":   item.get('axis_distribution', {}) if level in ("shiho", "full") else {},
+
         # ── [B] 원본 데이터 보존 (사용자 검증·참고용) ──
         "chris_analysis":     chris_analysis,
     }
@@ -2179,17 +2728,24 @@ def export_diagnosis_json(item, level="shiho"):
         payload["moon_rewrite"] = moon_rewrite
 
     # ── 메타데이터 (Revise Engine 호환) ──
+    _gp = item.get('genre_profile', {})
+    _gp = _gp if isinstance(_gp, dict) else {}
     payload["metadata"] = {
         "engine":             "rewrite-engine",
         "export_level":       level,
         "exported_at":        datetime.now().isoformat(),
         "genre":              genre_str,
         "genre_key":          item.get('genre_compliance', {}).get('genre_key', ''),
+        # v2.3 — 어떤 장르 프로파일로 진단했는지 반드시 명시 (폴백 추적용)
+        "genre_profile_id":     _gp.get('profile_id', ''),
+        "genre_profile_source": _gp.get('source', 'fallback'),
+        "genre_profile_applied": bool(_gp.get('applied', False)),
         "rewrite_count":      len(rewrite_suggestions),
         "add_count":          len(add_suggestions),
         "weak_zone_count":    len(weak_zone_scenes),
+        "protected_asset_count": len(item.get('protected_assets', []) or []),
         "rewrite_source":     "moon_scenes" if (level == "full" and moon_scenes) else ("shiho_heuristic" if rewrite_suggestions else "none"),
-        "schema_note":        "Revise Engine v2.3 자동 흡수 키 + 원본 데이터 동시 수록. 평면 키는 absorb_rewrite_engine_metadata()용.",
+        "schema_note":        "Revise Engine v2.3 자동 흡수 키 + 원본 데이터 동시 수록. protected_assets는 수정 금지 대상.",
     }
     
     json_str = json.dumps(payload, ensure_ascii=False, indent=2)
@@ -2199,6 +2755,131 @@ def export_diagnosis_json(item, level="shiho"):
 # =================================================================
 # [8] DOCX 생성
 # =================================================================
+# =================================================================
+# [10-B] 세션 중간 저장 / 복원 (v2.3)
+#
+# 목적: CHRIS·SHIHO까지 돌려놓고 나중에 MOON만 이어서 돌리거나,
+#       같은 분석 결과를 다시 API 호출 없이 열어보기 위한 내부용 기능.
+#       외부 배포용 기능이 아니라 작업자 편의 기능이다.
+# =================================================================
+SESSION_SNAPSHOT_KIND = "rewrite_engine_session"
+
+
+def build_session_snapshot():
+    """현재 세션 상태를 JSON 바이트로 직렬화. 진행된 단계까지만 담는다."""
+    from datetime import datetime
+    analysis  = st.session_state.get('analysis') or {}
+    washing   = st.session_state.get('washing') or {}
+    rewriting = st.session_state.get('rewriting') or {}
+
+    if rewriting.get('rewriting'):
+        stage = "moon"
+    elif washing.get('washing_table'):
+        stage = "shiho"
+    elif analysis.get('scores'):
+        stage = "chris"
+    else:
+        stage = "upload"
+
+    gp = analysis.get('genre_profile', {})
+    gp = gp if isinstance(gp, dict) else {}
+
+    payload = {
+        "kind":            SESSION_SNAPSHOT_KIND,
+        "engine_version":  "Rewrite Engine v2.3",
+        "schema_version":  "1.0",
+        "saved_at":        datetime.now().isoformat(),
+        "stage":           stage,
+        "step":            int(st.session_state.get('step', 0) or 0),
+        "title":           analysis.get('title', '') or st.session_state.get('_uploaded_name', ''),
+        "genre_profile_id": gp.get('profile_id', ''),
+        "upload_meta": {
+            "name":  st.session_state.get('_uploaded_name', ''),
+            "kb":    st.session_state.get('_uploaded_kb', 0),
+            "chars": st.session_state.get('_uploaded_chars', 0),
+        },
+        # 시나리오 본문 — 이것이 있어야 이어서 실행이 가능하다
+        "raw_text":        st.session_state.get('raw_text') or "",
+        "analysis":        analysis,
+        "washing":         washing,
+        "rewriting":       rewriting,
+        "writer_ref":      st.session_state.get('writer_ref') or None,
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2).encode('utf-8')
+
+
+def restore_session_snapshot(raw_bytes):
+    """중간 저장 JSON → 세션 복원. (ok, message, stage) 반환."""
+    try:
+        payload = json.loads(raw_bytes.decode('utf-8'))
+    except Exception as e:
+        return False, f"JSON 해석 실패: {type(e).__name__}", ""
+
+    if not isinstance(payload, dict):
+        return False, "최상위가 JSON 객체가 아닙니다.", ""
+
+    if payload.get('kind') != SESSION_SNAPSHOT_KIND:
+        return False, ("Rewrite Engine 중간 저장 파일이 아닙니다. "
+                       "진단 리포트 JSON(내보내기용)은 복원할 수 없습니다."), ""
+
+    raw_text = payload.get('raw_text') or ""
+    analysis = payload.get('analysis') or {}
+    if not isinstance(analysis, dict):
+        analysis = {}
+    washing = payload.get('washing') or {}
+    if not isinstance(washing, dict):
+        washing = {}
+    rewriting = payload.get('rewriting') or {}
+    if not isinstance(rewriting, dict):
+        rewriting = {}
+
+    if not raw_text and not analysis:
+        return False, "복원할 내용이 없습니다 (본문·분석 결과 모두 비어 있음).", ""
+
+    st.session_state.raw_text  = raw_text or None
+    st.session_state.analysis  = analysis or None
+    st.session_state.washing   = washing or None
+    st.session_state.rewriting = rewriting or None
+    st.session_state.selected_item = None
+
+    wref = payload.get('writer_ref')
+    if isinstance(wref, dict) and wref.get('ok'):
+        st.session_state.writer_ref = wref
+
+    um = payload.get('upload_meta', {})
+    if isinstance(um, dict):
+        st.session_state['_uploaded_name']  = um.get('name', '')
+        st.session_state['_uploaded_kb']    = um.get('kb', 0)
+        st.session_state['_uploaded_chars'] = um.get('chars', 0)
+
+    stage = str(payload.get('stage', ''))
+    step_map = {"upload": 0, "chris": 2, "shiho": 3, "moon": 4}
+    st.session_state.step = step_map.get(stage, int(payload.get('step', 0) or 0))
+    st.session_state['_uploaded_ready'] = False
+
+    # 다운로드 캐시 무효화 (복원된 데이터로 다시 생성되게)
+    for k in list(st.session_state.keys()):
+        if str(k).startswith(('_docx_', '_json_')):
+            st.session_state.pop(k, None)
+
+    return True, f"{stage or '알 수 없는'} 단계까지 복원했습니다.", stage
+
+
+def session_snapshot_filename():
+    from datetime import datetime
+    analysis = st.session_state.get('analysis') or {}
+    title = (analysis.get('title', '') or st.session_state.get('_uploaded_name', '') or '무제')
+    title = re.sub(r'[\\/:*?"<>|]', '', str(title)).replace('.pdf', '').strip() or '무제'
+    stage = "upload"
+    if (st.session_state.get('rewriting') or {}).get('rewriting'):
+        stage = "MOON"
+    elif (st.session_state.get('washing') or {}).get('washing_table'):
+        stage = "SHIHO"
+    elif analysis.get('scores'):
+        stage = "CHRIS"
+    return f"세션저장_{title}_{stage}_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
+
+
 def create_docx(item, level="full"):
     """DOCX 보고서 생성 — level 파라미터로 출력 범위 제어
     level:
@@ -2218,7 +2899,11 @@ def create_docx(item, level="full"):
             "dialogue_analysis":  item.get("dialogue_analysis", {}),
             "suggestions":        item.get("suggestions", []),
             "opening_rx":         item.get("opening_rx", {}),
-            "genre_fun_recovery": item.get("genre_fun_recovery", {})
+            "genre_fun_recovery": item.get("genre_fun_recovery", {}),
+            "genre_axis_rx":      item.get("genre_axis_rx", []),
+            "axis_distribution":  item.get("axis_distribution", {}),
+            "axis_gate":          item.get("axis_gate", {}),
+            "protected_assets_note": item.get("protected_assets_note", "")
         }
         rewriting_payload = {"rewriting": {}}  # MOON 제거
     else:  # full
@@ -2227,7 +2912,11 @@ def create_docx(item, level="full"):
             "dialogue_analysis":  item.get("dialogue_analysis", {}),
             "suggestions":        item.get("suggestions", []),
             "opening_rx":         item.get("opening_rx", {}),
-            "genre_fun_recovery": item.get("genre_fun_recovery", {})
+            "genre_fun_recovery": item.get("genre_fun_recovery", {}),
+            "genre_axis_rx":      item.get("genre_axis_rx", []),
+            "axis_distribution":  item.get("axis_distribution", {}),
+            "axis_gate":          item.get("axis_gate", {}),
+            "protected_assets_note": item.get("protected_assets_note", "")
         }
         rewriting_payload = {"rewriting": item.get("rewriting", {})}
 
@@ -2502,6 +3191,73 @@ def _create_docx_fallback(item, level="full"):
                 if om.get('opening_diagnosis'):
                     doc.add_paragraph(f"오프닝 종합 진단: {safe_str(om.get('opening_diagnosis',''))}")
 
+            # ─── 7-D. 장르 정밀 진단축 (v2.3) ───
+            ga = genre.get('genre_axes', {})
+            if isinstance(ga, dict):
+                axes = ga.get('axes', [])
+                axes = [a for a in axes if isinstance(a, dict)] if isinstance(axes, list) else []
+                gp = item.get('genre_profile', {})
+                gp = gp if isinstance(gp, dict) else {}
+                if axes:
+                    doc.add_heading("7-D. 장르 정밀 진단축 (Genre Axes)", 1)
+                    doc.add_paragraph(
+                        f"적용 프로파일: {safe_str(gp.get('genre_label',''))} "
+                        f"(profile_id: {safe_str(gp.get('profile_id','') or ga.get('profile_id',''))} / "
+                        f"source: {safe_str(gp.get('source','lookup'))})"
+                    )
+                    for a in axes:
+                        doc.add_heading(
+                            f"[{safe_str(a.get('code',''))}] {safe_str(a.get('name',''))} — "
+                            f"{safe_str(a.get('severity',''))} / {safe_int(a.get('score',0))}점", 2
+                        )
+                        m = a.get('metrics', {})
+                        if isinstance(m, dict) and m:
+                            doc.add_paragraph("실측: " + ", ".join([f"{safe_str(k)}={safe_str(v)}" for k, v in m.items()]))
+                        if a.get('finding'):
+                            doc.add_paragraph(f"진단: {safe_str(a.get('finding',''))}")
+                        if a.get('prescription_hint'):
+                            doc.add_paragraph(f"처방 방향: {safe_str(a.get('prescription_hint',''))}")
+                    gags = ga.get('running_gags', [])
+                    gags = [g for g in gags if isinstance(g, dict)] if isinstance(gags, list) else []
+                    if gags:
+                        doc.add_heading("러닝개그 생애주기 판정", 2)
+                        for g in gags:
+                            doc.add_paragraph(
+                                f"• {safe_str(g.get('element',''))} ({safe_str(g.get('occurrences',''))}회) "
+                                f"— {safe_str(g.get('status',''))}"
+                            )
+                            doc.add_paragraph(
+                                f"    설치: {safe_str(g.get('setup',''))} / 회수: {safe_str(g.get('payoff',''))}"
+                            )
+                            if g.get('note'):
+                                doc.add_paragraph(f"    {safe_str(g.get('note',''))}")
+                    if ga.get('genre_score_breakdown'):
+                        doc.add_paragraph(f"GENRE 축 산출 근거: {safe_str(ga.get('genre_score_breakdown',''))}")
+                elif gp and not gp.get('applied'):
+                    doc.add_heading("7-D. 장르 정밀 진단축", 1)
+                    doc.add_paragraph(
+                        f"등록된 정밀 진단 프로파일이 없어 기본 8장르 Rule Pack"
+                        f"({safe_str(gp.get('genre_key',''))})으로 진단했습니다. (source: fallback)"
+                    )
+
+            # ─── 7-E. 보호 자산 (v2.3) ───
+            pas = item.get('protected_assets', [])
+            if isinstance(pas, list) and pas:
+                doc.add_heading("7-E. 보호 자산 (Protected Assets)", 1)
+                doc.add_paragraph("이미 잘 작동하는 자산 — 수정·삭제 금지 대상")
+                for a in pas:
+                    if isinstance(a, dict):
+                        doc.add_paragraph(
+                            f"🔒 [{safe_str(a.get('kind',''))}] {safe_str(a.get('asset',''))} "
+                            f"({safe_str(a.get('where',''))})"
+                        )
+                        if a.get('why'):
+                            doc.add_paragraph(f"    작동 이유: {safe_str(a.get('why',''))}")
+                        if a.get('do_not'):
+                            doc.add_paragraph(f"    금지: {safe_str(a.get('do_not',''))}")
+                    elif a:
+                        doc.add_paragraph(f"🔒 {safe_str(a)}")
+
             # ─── 7-C. OPENING RX (v2.1) — SHIHO 자료, level='chris'에서는 스킵 ───
             rx = item.get('opening_rx', {})
             if level != "chris" and isinstance(rx, dict) and rx:
@@ -2542,11 +3298,56 @@ def _create_docx_fallback(item, level="full"):
             doc.add_heading("8. 시퀀스 워싱 (Washing Table)", 1)
             for row in item.get('washing_table', []):
                 if not isinstance(row, dict): continue
-                doc.add_paragraph(f"[{safe_str(row.get('seq',''))}]  {safe_str(row.get('label',''))}")
+                axis_tag = f"  [{safe_str(row.get('axis',''))}]" if row.get('axis') else ""
+                doc.add_paragraph(f"[{safe_str(row.get('seq',''))}]  {safe_str(row.get('label',''))}{axis_tag}")
                 wtbl = doc.add_table(rows=1, cols=2)
                 wtbl.style = 'Table Grid'
                 wtbl.rows[0].cells[0].text = f"⚠️ 진단\n{safe_str(row.get('diagnosis',''))}"
                 wtbl.rows[0].cells[1].text = f"✅ 처방\n{safe_str(row.get('prescription',''))}"
+                if row.get('replace_with'):
+                    doc.add_paragraph(f"🔄 대체 지정: {safe_str(row.get('replace_with',''))}")
+
+            # 8-B. 처방 균형 + 장르 정밀축 처방 (v2.3)
+            gate = item.get('axis_gate', {})
+            gate = gate if isinstance(gate, dict) else {}
+            dist = item.get('axis_distribution', {})
+            dist = dist if isinstance(dist, dict) else {}
+            if gate or dist:
+                doc.add_heading("8-B. 처방 균형 (Prescription Balance)", 1)
+                try:
+                    _ratio = float(gate.get('ratio', dist.get('comedy_ratio', 0)) or 0)
+                    _min = float(gate.get('min_ratio', dist.get('gate_min', 0.30)) or 0.30)
+                except (ValueError, TypeError):
+                    _ratio, _min = 0.0, 0.30
+                _passed = bool(gate.get('passed', dist.get('gate_passed', _ratio >= _min)))
+                doc.add_paragraph(
+                    f"{'✓ 균형 통과' if _passed else '✗ 장르 처방 부족'} — "
+                    f"장르 고유 처방 {_ratio*100:.0f}% (하한 {_min*100:.0f}%) / "
+                    f"{gate.get('comedy_count', dist.get('comedy_count',0))}건 중 "
+                    f"{gate.get('total_count', dist.get('total_count',0))}건"
+                )
+                miss = gate.get('missing_replace_with', [])
+                if isinstance(miss, list) and miss:
+                    doc.add_paragraph("⚠️ 대체 지정이 비어 있는 삭제 처방: " + ", ".join([safe_str(m) for m in miss if m]))
+                if dist.get('note'):
+                    doc.add_paragraph(safe_str(dist.get('note', '')))
+                if item.get('protected_assets_note'):
+                    doc.add_paragraph(f"🔒 보호 자산 준수: {safe_str(item.get('protected_assets_note',''))}")
+
+            gax = item.get('genre_axis_rx', [])
+            gax = [r for r in gax if isinstance(r, dict)] if isinstance(gax, list) else []
+            if gax:
+                doc.add_heading("8-C. 장르 정밀축 처방 (Genre Axis RX)", 1)
+                for r in gax:
+                    doc.add_paragraph(
+                        f"[{safe_str(r.get('axis_code',''))}] {safe_str(r.get('axis_name',''))} "
+                        f"— 대상: {safe_str(r.get('target',''))}"
+                    )
+                    doc.add_paragraph(f"    처방: {safe_str(r.get('prescription',''))}")
+                    if r.get('replace_with'):
+                        doc.add_paragraph(f"    🔄 대체 지정: {safe_str(r.get('replace_with',''))}")
+                    if r.get('expected_effect'):
+                        doc.add_paragraph(f"    🎯 기대 효과: {safe_str(r.get('expected_effect',''))}")
 
             # 9. 대사 워싱
             doc.add_heading("9. 대사 워싱 (Dialogue Washing)", 1)
@@ -2555,17 +3356,25 @@ def _create_docx_fallback(item, level="full"):
                 doc.add_paragraph(f"종합 대사 수준: {da.get('overall_score',0)} / 10")
                 ax = da.get('axis_scores', {})
                 if isinstance(ax, dict) and ax:
-                    doc.add_heading("3축 점수", 2)
-                    atbl = doc.add_table(rows=4, cols=3)
-                    atbl.style = 'Table Grid'
-                    atbl.rows[0].cells[0].text = '평가 축'
-                    atbl.rows[0].cells[1].text = '기준'
-                    atbl.rows[0].cells[2].text = '점수'
                     axes = [
                         ('① 캐릭터 적합성', '고유 어휘·말투·감정 반영',   safe_int(ax.get('character_voice',0))),
                         ('② 서브텍스트',    '표면↔이면 충돌, 설명형 금지', safe_int(ax.get('subtext',0))),
                         ('③ 행동/감정/관계','장면 추진력, 정보전달 금지',   safe_int(ax.get('action_driven',0))),
                     ]
+                    for key, lbl, crit in [
+                        ('comic_timing',      '④ 코믹 타이밍', '펀치라인이 문장 말미에 있는가'),
+                        ('comic_specificity', '⑤ 코믹 구체성', '추상어 대신 수치·고유명사가 있는가'),
+                        ('status_dynamics',   '⑥ 지위 관계',   '씬 시작과 끝의 위계가 흔들리는가'),
+                    ]:
+                        if key in ax:
+                            axes.append((lbl, crit, safe_int(ax.get(key, 0))))
+
+                    doc.add_heading("평가축 점수", 2)
+                    atbl = doc.add_table(rows=len(axes) + 1, cols=3)
+                    atbl.style = 'Table Grid'
+                    atbl.rows[0].cells[0].text = '평가 축'
+                    atbl.rows[0].cells[1].text = '기준'
+                    atbl.rows[0].cells[2].text = '점수'
                     for i, (lbl, crit, val) in enumerate(axes, 1):
                         atbl.rows[i].cells[0].text = lbl
                         atbl.rows[i].cells[1].text = crit
@@ -2576,14 +3385,14 @@ def _create_docx_fallback(item, level="full"):
                     doc.add_paragraph(f"💪 {safe_str(s)}")
                 issues = da.get('issues', [])
                 if isinstance(issues, list) and issues:
-                    doc.add_heading("대사 4축 진단 Before / After", 2)
+                    doc.add_heading("대사 진단 Before / After", 2)
                     for issue in issues:
                         if not isinstance(issue, dict): continue
                         doc.add_paragraph(f"[{safe_str(issue.get('type',''))}]  {safe_str(issue.get('axis',''))}  {safe_str(issue.get('description',''))}")
                         itbl = doc.add_table(rows=1, cols=2)
                         itbl.style = 'Table Grid'
                         itbl.rows[0].cells[0].text = f"❌ BEFORE\n{safe_str(issue.get('example_bad',''))}"
-                        itbl.rows[0].cells[1].text = f"✅ ④ 개선 제안\n{safe_str(issue.get('example_good',''))}"
+                        itbl.rows[0].cells[1].text = f"✅ 개선 제안\n{safe_str(issue.get('example_good',''))}"
                         if issue.get('rewrite_note'):
                             doc.add_paragraph(f"✏️ Moon 지시: {safe_str(issue.get('rewrite_note',''))}")
 
@@ -2691,6 +3500,156 @@ def agent_card(emoji, name, role, desc, status, key, btn_label, btn_fn, result_f
 # =================================================================
 # [11] 워크스페이스 페이지
 # =================================================================
+def render_advanced_panel():
+    """🔧 고급 — JSON 입력 / 중간 저장 (내부 작업자용)
+
+    · Writer Engine 세션 JSON을 보조 참조 데이터로 첨부
+    · 진행 중인 분석을 JSON으로 내려받고, 나중에 그대로 복원
+    """
+    analysis  = st.session_state.get('analysis') or {}
+    washing   = st.session_state.get('washing') or {}
+    rewriting = st.session_state.get('rewriting') or {}
+    has_any = bool(analysis.get('scores') or washing.get('washing_table') or rewriting.get('rewriting'))
+    wref = st.session_state.get('writer_ref')
+
+    # 접힌 상태에서도 연결 여부를 알 수 있게 라벨에 표시
+    label = "🔧 고급 — JSON 입력 / 중간 저장"
+    if wref:
+        label += "  · Writer 참조 연결됨"
+    if has_any:
+        label += "  · 저장 가능"
+
+    with st.expander(label, expanded=False):
+
+        c1, c2 = st.columns(2, gap="large")
+
+        # ─────────────────────────────────────────────
+        # 왼쪽: 중간 저장 / 복원
+        # ─────────────────────────────────────────────
+        with c1:
+            st.markdown(
+                '<div style="font-weight:800;color:#191970;font-size:0.9rem;margin-bottom:4px;">💾 중간 저장</div>'
+                '<div style="font-size:0.78rem;color:#4A5568;line-height:1.6;margin-bottom:10px;">'
+                '진행된 단계까지의 결과와 시나리오 본문을 한 파일로 저장합니다. '
+                '나중에 복원하면 API 재호출 없이 그 지점부터 이어갈 수 있습니다.'
+                '</div>',
+                unsafe_allow_html=True
+            )
+
+            if has_any:
+                try:
+                    snap = build_session_snapshot()
+                    st.download_button(
+                        "💾 현재 상태 저장",
+                        data=snap,
+                        file_name=session_snapshot_filename(),
+                        mime="application/json",
+                        use_container_width=True,
+                        key="_snap_dl",
+                    )
+                    st.caption(f"{len(snap)/1024:,.0f} KB")
+                except Exception as e:
+                    st.caption(f"⚠️ 저장 파일 생성 실패: {type(e).__name__}")
+            else:
+                st.caption("아직 저장할 결과가 없습니다. CHRIS 분석 이후부터 저장할 수 있습니다.")
+
+            restore_file = st.file_uploader(
+                "중간 저장 파일 복원",
+                type=["json"],
+                key="_snap_up",
+                help="이전에 '현재 상태 저장'으로 내려받은 파일을 올리세요.",
+            )
+            if restore_file is not None:
+                sig = f"{restore_file.name}:{restore_file.size}"
+                if st.session_state.get('_snap_restored_sig') != sig:
+                    ok, msg, stage = restore_session_snapshot(restore_file.getvalue())
+                    if ok:
+                        st.session_state['_snap_restored_sig'] = sig
+                        st.success(f"✓ {msg}")
+                        st.rerun()
+                    else:
+                        st.error(f"복원 실패 — {msg}")
+
+        # ─────────────────────────────────────────────
+        # 오른쪽: Writer Engine 참조 JSON
+        # ─────────────────────────────────────────────
+        with c2:
+            st.markdown(
+                '<div style="font-weight:800;color:#191970;font-size:0.9rem;margin-bottom:4px;">🔗 Writer Engine 참조</div>'
+                '<div style="font-size:0.78rem;color:#4A5568;line-height:1.6;margin-bottom:10px;">'
+                'Writer Engine 세션 JSON을 첨부하면 비트별 장르 부스터 판정을 CHRIS 진단의 보조 근거로 씁니다. '
+                '<strong>분석 대상이 아니라 참조 자료</strong>이며, 씬 판정의 권위는 시나리오 본문에 있습니다.'
+                '</div>',
+                unsafe_allow_html=True
+            )
+
+            if wref:
+                s = summarize_writer_ref(wref)
+                ret = s.get('act3_retention_pct')
+                ret_txt = f"{ret}%" if ret is not None else "산출 불가"
+                info = (
+                    '<div style="background:#EEF0FA;border:1px solid #C5CBE8;border-radius:8px;padding:11px 13px;margin-bottom:9px;">'
+                    f'<div style="font-weight:800;color:#191970;font-size:0.86rem;">{safe(s.get("title",""))}</div>'
+                    f'<div style="font-size:0.78rem;color:#4A5568;margin-top:4px;line-height:1.7;">'
+                    f'장르(Writer 기록): {safe(s.get("genre",""))}<br>'
+                    f'부스터 데이터 비트: {s.get("scored_beat_count",0)} / {s.get("beat_count",0)}<br>'
+                    f'설계 기준 3막 유지율: {ret_txt}'
+                    f'</div></div>'
+                )
+                st.markdown(info, unsafe_allow_html=True)
+
+                for w in (wref.get('warnings') or [])[:3]:
+                    st.markdown(
+                        '<div style="background:#FFFBE6;border-left:3px solid #FFCB05;padding:8px 11px;'
+                        f'border-radius:6px;margin-bottom:7px;font-size:0.78rem;color:#191970;line-height:1.6;">⚠️ {safe(w)}</div>',
+                        unsafe_allow_html=True
+                    )
+
+                if st.button("↩ 참조 해제", use_container_width=True, key="_wref_clear"):
+                    st.session_state.writer_ref = None
+                    st.session_state.pop('_wref_sig', None)
+                    st.rerun()
+            else:
+                wfile = st.file_uploader(
+                    "Writer Engine 세션 JSON",
+                    type=["json"],
+                    key="_wref_up",
+                    help="WriterEngine_...json 형태의 세션 파일",
+                )
+                if wfile is not None:
+                    sig = f"{wfile.name}:{wfile.size}"
+                    if st.session_state.get('_wref_sig') != sig:
+                        ref = parse_writer_session(wfile.getvalue())
+                        if ref.get('ok'):
+                            st.session_state.writer_ref = ref
+                            st.session_state['_wref_sig'] = sig
+                            st.rerun()
+                        else:
+                            st.error(f"읽기 실패 — {ref.get('message','알 수 없는 오류')}")
+
+        # ─────────────────────────────────────────────
+        # 등록된 장르 프로파일 상태
+        # ─────────────────────────────────────────────
+        try:
+            profs = list_genre_profiles()
+            err = get_profile_load_error()
+            if err:
+                st.markdown(
+                    '<div style="background:#FFF5F5;border-left:3px solid #FF6432;padding:9px 12px;border-radius:6px;'
+                    f'margin-top:10px;font-size:0.78rem;color:#191970;line-height:1.6;">⚠️ 장르 프로파일 로드 문제 — {safe(err)}</div>',
+                    unsafe_allow_html=True
+                )
+            elif profs:
+                names = ' · '.join([f"{p['genre_label']}({p['axes']}축)" for p in profs])
+                st.markdown(
+                    '<div style="margin-top:10px;font-size:0.75rem;color:#6B7280;">'
+                    f'등록된 정밀 진단 프로파일: {safe(names)}</div>',
+                    unsafe_allow_html=True
+                )
+        except Exception:
+            pass
+
+
 def show_workspace():
     st.markdown("""
     <div style="text-align:center;padding:36px 0 8px;">
@@ -2704,6 +3663,8 @@ def show_workspace():
     st.markdown('<hr>', unsafe_allow_html=True)
 
     client = get_client()
+
+    render_advanced_panel()
 
     # ── 업로드 ──
     if step == 0:
@@ -2772,7 +3733,7 @@ def show_workspace():
             if not api_key:
                 st.error("❌ ANTHROPIC_API_KEY가 Secrets에 없습니다. Streamlit Cloud → Settings → Secrets 확인")
                 return
-            r = run_blue(text, client)
+            r = run_blue(text, client, writer_ref=st.session_state.get('writer_ref'))
             if r:
                 st.session_state.analysis = r
                 st.session_state.step = 2
@@ -2873,7 +3834,11 @@ def show_workspace():
             'dialogue_analysis':  st.session_state.washing.get('dialogue_analysis', {}),
             'suggestions':        st.session_state.washing.get('suggestions', []),
             'opening_rx':         st.session_state.washing.get('opening_rx', {}),
-            'genre_fun_recovery': st.session_state.washing.get('genre_fun_recovery', {})
+            'genre_fun_recovery': st.session_state.washing.get('genre_fun_recovery', {}),
+            'genre_axis_rx':      st.session_state.washing.get('genre_axis_rx', []),
+            'axis_distribution':  st.session_state.washing.get('axis_distribution', {}),
+            'axis_gate':          st.session_state.washing.get('axis_gate', {}),
+            'protected_assets_note': st.session_state.washing.get('protected_assets_note', '')
         }
         title = re.sub(r'[/*?:"<>|]', '_', merged_shiho.get('title', '제목없음'))
         current_id = id(st.session_state.washing)
@@ -2944,6 +3909,10 @@ def show_workspace():
                     'dialogue_analysis':  st.session_state.washing.get('dialogue_analysis', {}),
                     'opening_rx':         st.session_state.washing.get('opening_rx', {}),
                     'genre_fun_recovery': st.session_state.washing.get('genre_fun_recovery', {}),
+                    'genre_axis_rx':      st.session_state.washing.get('genre_axis_rx', []),
+                    'axis_distribution':  st.session_state.washing.get('axis_distribution', {}),
+                    'axis_gate':          st.session_state.washing.get('axis_gate', {}),
+                    'protected_assets_note': st.session_state.washing.get('protected_assets_note', ''),
                     'rewriting':          r.get('rewriting', {})
                 }
                 st.session_state.db.insert(0, full)
@@ -3100,7 +4069,11 @@ def show_index():
                             'dialogue_analysis':  item.get('dialogue_analysis', {}),
                             'suggestions':        item.get('suggestions', []),
                             'opening_rx':         item.get('opening_rx', {}),
-                            'genre_fun_recovery': item.get('genre_fun_recovery', {})
+                            'genre_fun_recovery': item.get('genre_fun_recovery', {}),
+                            'genre_axis_rx':      item.get('genre_axis_rx', []),
+                            'axis_distribution':  item.get('axis_distribution', {}),
+                            'axis_gate':          item.get('axis_gate', {}),
+                            'protected_assets_note': item.get('protected_assets_note', '')
                         }
                         st.session_state.rewriting = {'rewriting': item.get('rewriting', {})}
                         st.session_state.step = 4
