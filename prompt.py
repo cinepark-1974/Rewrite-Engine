@@ -1,8 +1,13 @@
 # =================================================================
-# 👖 BLUE JEANS SCRIPT DOCTOR : REWRITE ENGINE v2.3
+# 👖 BLUE JEANS SCRIPT DOCTOR : REWRITE ENGINE v2.4
 # prompt.py — System Prompt + Genre Rules + OPENING MASTERY + 3-Stage Prompts
 # =================================================================
 # © 2026 BLUE JEANS PICTURES. All rights reserved.
+#
+# v2.4 CHANGELOG
+# - Market Lens 연동 (Idea Engine market_lens_pack.py 공유)
+# - CHRIS: market_fit (4축 점수와 분리) / SHIHO: market_rx (washing_table과 분리)
+# - MOON: 시장 규제 레드라인만 전달 (새로 만들지 말 것)
 #
 # v2.1 CHANGELOG
 # - OPENING MASTERY 모듈 이식 (Creator/Writer Engine 연동)
@@ -432,6 +437,7 @@ Punch(씬 종결 패턴): {rules['punch']}
 # =================================================================
 import os
 import json as _json
+import re
 
 GENRE_PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "genre_profiles")
 
@@ -859,6 +865,423 @@ BEATS_15 = [
 ]
 
 # =================================================================
+# [4-M] MARKET LENS 연동 (v2.4)
+#
+# · 시장 데이터의 단일 원본은 Idea Engine의 market_lens_pack.py다.
+#   이 저장소에는 같은 파일을 수정 없이 복사해 둔다.
+# · 시장 적합성(market_fit)은 4축 점수(scores)와 분리한다.
+# · 시장 처방(market_rx)은 washing_table과 분리한다 (처방 균형 게이트 분모 보호).
+# · MOON에는 규제 레드라인만 "새로 만들지 말 것"으로 전달한다.
+# =================================================================
+try:
+    import market_lens_pack as MLP
+    _MLP_LOAD_ERROR = ""
+except Exception as _e:  # 파일 누락·문법 오류가 있어도 엔진은 시장 블록 없이 동작
+    MLP = None
+    _MLP_LOAD_ERROR = f"market_lens_pack.py 로드 실패 ({type(_e).__name__})"
+
+DEFAULT_TARGET_MARKET = "한국"
+MARKET_LENS_VERSION = "Market Lens Pack v1.1"
+MARKET_GRADES = ("VERIFIED", "INFERENCE", "CREATIVE_JUDGMENT", "VERIFICATION_REQUIRED")
+
+# VN 평가 8축 (렌즈 [VN 평가 8축] 순서와 동일)
+VN_MARKET_AXES = [
+    ("M1", "시장 적합성"), ("M2", "장르 경쟁력"), ("M3", "관객 접근성"),
+    ("M4", "현지화 적합성"), ("M5", "제작 실현성"), ("M6", "배급 적합성"),
+    ("M7", "마케팅 가능성"), ("M8", "규제 위험"),
+]
+# 출처 표시가 없는 렌즈(KR·JP·ID 등)에서 채우는 축
+BASIC_MARKET_AXES = [("M1", "시장 적합성"), ("M2", "장르 경쟁력"), ("M8", "규제 위험")]
+
+
+def get_market_lens_error() -> str:
+    """market_lens_pack 로드 문제 문자열 (없으면 '')"""
+    return _MLP_LOAD_ERROR
+
+
+def list_market_options() -> list:
+    """화면 선택 상자용 시장 목록 [(code, 한글 라벨, 국기), ...].
+    market_lens_pack.MARKET_LABELS를 그대로 읽으므로, Idea Engine 쪽에 시장이 추가되면
+    같은 파일을 복사하는 것만으로 선택지가 늘어난다."""
+    if MLP is None:
+        return [("KR", "한국", "")]
+    out = []
+    for code, val in getattr(MLP, "MARKET_LABELS", {}).items():
+        try:
+            label, flag = val[0], val[1]
+        except Exception:
+            label, flag = str(val), ""
+        out.append((code, label, flag))
+    return out or [("KR", "한국", "")]
+
+
+def build_target_market_string(primary_label: str, secondary_label: str = "") -> str:
+    """선택값 → resolve_market_lens()에 넘길 문자열. 1차가 앞에 와야 1차로 판정된다."""
+    p = str(primary_label or DEFAULT_TARGET_MARKET).strip()
+    s = str(secondary_label or "").strip()
+    if not s or s == "없음" or s == p:
+        return p
+    return f"{p} {s}"
+
+
+def resolve_market(target_market: str) -> dict:
+    """시장 문자열 → 판정 결과. 렌즈 모듈이 없으면 available=False."""
+    tm = str(target_market or DEFAULT_TARGET_MARKET)
+    if MLP is None:
+        return {"available": False, "target_market": tm, "primary": "KR", "secondary": "",
+                "lens_text": "", "japan": False, "vietnam": False, "data_as_of": ""}
+    r = MLP.resolve_market_lens(tm)
+    vietnam = bool(r.get("vietnam_lens_mode"))
+    return {
+        "available": True,
+        "target_market": tm,
+        "primary": r.get("primary") or "KR",
+        "secondary": r.get("secondary") or "",
+        "lens_text": r.get("lens_text", ""),
+        "japan": bool(r.get("japan_doc_mode")),
+        "vietnam": vietnam,
+        "data_as_of": getattr(MLP, "VN_DATA_AS_OF", "") if vietnam else "",
+    }
+
+
+def market_label(code: str) -> str:
+    """시장 코드 → '🇻🇳 베트남' 형태 라벨"""
+    if not code:
+        return ""
+    for c, label, flag in list_market_options():
+        if c == code:
+            return f"{flag} {label}".strip()
+    return str(code)
+
+
+MARKET_TERM_MAP_BLOCK = """[렌즈 용어 대응표 — 렌즈는 Idea Engine 단계명으로 쓰여 있다. 아래처럼 읽어라]
+- Stage 4 / Stage 5 / Stage 6 → market_fit 블록 전체
+- conditional_requirements → market_fit.localization_conditions
+- stars → market_fit.axes[].stars (0~5 정수)
+- risk_signals → market_fit.regulation_flags + market_fit.risks
+- domestic_market / global_market → market_fit.primary / market_fit.secondary
+- "입력된 기획" / "LOCKED 시드" → 업로드된 시나리오 본문 / protected_assets"""
+
+MARKET_FIT_RULES_BLOCK = """[MARKET FIT — 시장 적합성 진단 규칙]
+1. 시장 적합성은 4축 점수(scores)와 별개다. 시장 판단을 이유로 structure/hero/concept/genre 점수를 올리거나 내리지 마라.
+   CONCEPT 축의 '시장성 있는 설정'도 특정 시장이 아니라 작품 자체의 설정 경쟁력으로 채점한다.
+2. 원고의 장르를 아래 시장 장르군 중 하나에 대응시키고 genre_group에 기록한다. 장르 Rule Pack 키(genre_compliance.genre_key)는 바꾸지 않는다.
+3. 장르 흥행 데이터는 경쟁 강도·포화도 판단 근거로만 쓴다. "이 장르가 잘 된다"는 이유로 가점하지 마라.
+4. 규제 위험은 렌즈의 [법률·심의·규제]에 적힌 조항만 근거로 삼는다. 각 위험에 해당 씬 번호(S#)를 반드시 붙인다.
+   예상 등급(P·K·T13·T16·T18·C 등)은 CREATIVE_JUDGMENT로 표기한다.
+   렌즈에 [법률·심의·규제] 섹션이 없는 시장은 [문화 제약]·[기피 사항] 항목만 근거로 삼고,
+   clause에는 '렌즈 [문화 제약] — 해당 문구 요지'처럼 섹션명을 적는다. 법 조항 번호를 만들어내지 마라.
+5. 확인되지 않은 제작비·수익률·손익분기점·개봉 일정·특정 배급사의 선택 가능성은 만들지 않는다. 필요하면 verification_required에 적는다.
+6. 서로 다른 출처의 수치를 더하거나 직접 비교하지 않는다.
+7. 일본이 포함되면 3트랙(INDIE_ARTHOUSE / KR_REMAKE_TARGET / COPROD_VIPO) 중 해당 트랙을 jp_track에 판정하고,
+   해당 없으면 jp_track="NONE"으로 쓰고 일본 시장 axes의 stars를 모두 0으로 처리한다.
+8. 현지화 제안은 '조건'으로만 쓴다. 원고의 인물·사건·결말을 바꾸라는 처방은 market_fit에 넣지 않는다.
+9. 보호 자산(protected_assets)과 작가가 확정한 설정은 시장 평가를 이유로 바꾸라고 쓰지 않는다.
+10. axes의 stars는 0~5 정수다. M8 규제 위험은 '위험이 낮을수록 높은 점수'로 매긴다.
+11. 근거(evidence)마다 grade를 반드시 붙인다. VERIFIED에는 source(S1 등 렌즈 출처 ID)를 반드시 적는다."""
+
+VN_GENRE_GROUP_MAP_BLOCK = """[시장 장르군 대응표 — Rewrite 8장르 키 → VN 장르군]
+- 드라마 → 1) 가족·휴먼 드라마 (작가주의·영화제 지향이면 8) 독립·예술영화)
+- 느와르 → 4) 액션·범죄·스릴러
+- 스릴러 → 4) 액션·범죄·스릴러 (초자연 미스터리면 6) 공포·미스터리·초자연)
+- 코미디 → 2) 코미디·로맨틱 코미디
+- 멜로/로맨스 → 3) 로맨스·멜로드라마 (로맨틱 코미디면 2))
+- 호러 → 6) 공포·미스터리·초자연 (렌즈 판정: 포화·규제 주의 장르, 가점 금지)
+- 액션 → 4) 액션·범죄·스릴러 (전쟁물이면 5) 역사·전쟁·시대극)
+- SF/판타지 → 7) 판타지·SF·애니메이션
+- genre.tags에 시대극·사극·역사·전쟁이 있으면 → 5) 역사·전쟁·시대극"""
+
+FREE_GENRE_GROUP_NOTE = ("[시장 장르군 — 렌즈에 장르군 분류가 없는 시장]\n"
+                         "렌즈의 [흥행 장르] 또는 [시장 정체] 항목을 기준으로 genre_group에 자유 기재한다. "
+                         "(예: '한국 — CRIME·SOCIAL 결합')")
+
+
+def _market_grade_block(res: dict) -> str:
+    """선택된 시장 조합에 맞는 근거 등급 지시"""
+    codes = [c for c in (res.get("primary"), res.get("secondary")) if c]
+    sourced = [c for c in codes if c == "VN"]
+    unsourced = [c for c in codes if c != "VN"]
+    lines = ["[근거 등급 — 시장 서술마다 반드시 하나를 붙인다]",
+             "VERIFIED = 렌즈 출처로 확인된 산업 사실 / INFERENCE = 자료에 근거한 분석적 추론 / "
+             "CREATIVE_JUDGMENT = 작품에 대한 창작적·비평적 판단 / VERIFICATION_REQUIRED = 추가 검증이 필요한 사항"]
+    if sourced:
+        lines.append("- 베트남(VN): 렌즈에 [V·S#] 표시가 있는 항목만 VERIFIED로 쓰고 source에 S1~S10 중 해당 ID를 적는다. "
+                     "표시가 없는 내용을 VERIFIED로 올리지 않는다.")
+    if unsourced:
+        names = ", ".join([market_label(c) for c in unsourced])
+        lines.append(f"- {names}: 렌즈에 출처 표시가 없다. 이 시장의 산업 사실은 VERIFIED로 쓰지 못한다. 전부 INFERENCE로 표기하고, "
+                     "수치를 인용할 때는 text 끝에 '(렌즈 기재값, 출처 미표기)'를 붙인다.")
+    return "\n".join(lines)
+
+
+def _market_axes_instruction(res: dict) -> str:
+    codes = [c for c in (res.get("primary"), res.get("secondary")) if c]
+    lines = ["[market_fit.axes 구성 — 각 축 항목에 market(시장 코드)을 반드시 적는다]"]
+    for c in codes:
+        if c == "VN":
+            ax = " / ".join([f"{code} {name}" for code, name in VN_MARKET_AXES])
+            lines.append(f"- VN: 8축 전부 채운다 → {ax}")
+        else:
+            ax = " / ".join([f"{code} {name}" for code, name in BASIC_MARKET_AXES])
+            lines.append(f"- {c}: 3축만 채운다 → {ax} (나머지 축은 렌즈에 근거 데이터가 없으므로 만들지 않는다)")
+    return "\n".join(lines)
+
+
+def build_market_fit_block(target_market: str) -> dict:
+    """CHRIS용 시장 블록과 JSON 스키마 조각.
+    반환: {"block": 프롬프트 본문, "schema": JSON 스키마 조각(앞에 쉼표 포함), "res": resolve 결과}
+    렌즈 모듈이 없으면 block/schema는 빈 문자열."""
+    res = resolve_market(target_market)
+    if not res.get("available") or not res.get("lens_text"):
+        return {"block": "", "schema": "", "res": res}
+
+    codes = [c for c in (res["primary"], res["secondary"]) if c]
+    genre_map = VN_GENRE_GROUP_MAP_BLOCK if "VN" in codes else ""
+    if any(c != "VN" for c in codes):
+        genre_map = (genre_map + "\n\n" + FREE_GENRE_GROUP_NOTE).strip()
+
+    header = (f"[MARKET LENS — 이번 커버리지의 목표 시장]\n"
+              f"1차 시장: {market_label(res['primary'])}"
+              + (f" / 2차 시장: {market_label(res['secondary'])}" if res["secondary"] else " / 2차 시장: 없음")
+              + (f"\n자료 기준일(VN): {res['data_as_of']}" if res["data_as_of"] else ""))
+
+    block = "\n\n".join([
+        header,
+        res["lens_text"].strip(),
+        MARKET_TERM_MAP_BLOCK,
+        _market_grade_block(res),
+        MARKET_FIT_RULES_BLOCK,
+        genre_map,
+        _market_axes_instruction(res),
+    ])
+
+    jp_line = ('\n    "jp_track": "INDIE_ARTHOUSE / KR_REMAKE_TARGET / COPROD_VIPO / NONE 중 하나",'
+               if res["japan"] else "")
+    schema = f''',
+  "market_fit": {{
+    "primary": "{res['primary']}",
+    "secondary": "{res['secondary']}",
+    "data_as_of": "{res['data_as_of']}",
+    "genre_group": "시장 장르군 (위 대응표 기준)",
+    "verdict": "적합 / 조건부 / 부적합 중 하나",
+    "verdict_reason": "판정 근거 2~3줄",
+    "buyer_coordinate": "TENTPOLE / MASTERCLASS / STREAMING / GENRE_FEATURE 중 하나 + 이유 1줄",{jp_line}
+    "axes": [
+      {{
+        "market": "{res['primary']}",
+        "code": "M1",
+        "name": "시장 적합성",
+        "stars": 0,
+        "evidence": [
+          {{"grade": "INFERENCE", "source": "", "text": "근거 1줄"}}
+        ]
+      }}
+    ],
+    "regulation_flags": [
+      {{
+        "clause": "렌즈에 있는 조항 또는 섹션명",
+        "scene": "S#번호",
+        "issue": "어떤 묘사가 어떤 조항에 걸리는지 1줄",
+        "expected_rating": "예상 등급 (해당 없으면 빈 문자열)",
+        "grade": "CREATIVE_JUDGMENT"
+      }}
+    ],
+    "localization_conditions": ["현지 공동 작가·자문 어태치 등 조건 1줄씩"],
+    "risks": ["시장 리스크 1줄씩 — 끝에 (근거 등급) 표기"],
+    "verification_required": ["추가 검증이 필요한 사항 1줄씩"]
+  }}'''
+    return {"block": block, "schema": schema, "res": res}
+
+
+def _as_list(v):
+    return v if isinstance(v, list) else ([] if v in (None, "", {}) else [v])
+
+
+def normalize_market_fit(data: dict, target_market: str) -> list:
+    """CHRIS 응답의 market_fit 정규화 (data를 직접 수정).
+    반환: 화면 알림 목록 [(level, message)] — level은 'warning' 또는 'caption'.
+    서버 측 선택값이 최종 권위다 (장르 프로파일 처리 방식과 동일)."""
+    notes = []
+    if not isinstance(data, dict):
+        return notes
+    res = resolve_market(target_market)
+    mf = data.get("market_fit")
+    if not isinstance(mf, dict) or not mf:
+        data["market_fit"] = {}
+        if res.get("available"):
+            notes.append(("warning", "시장 적합성(market_fit) 결과가 비어 있습니다. 재분석을 권합니다."))
+        return notes
+
+    # 1·2차 시장과 기준일은 선택값으로 고정
+    if str(mf.get("primary", "")) != res["primary"] or str(mf.get("secondary", "") or "") != res["secondary"]:
+        notes.append(("caption", f"market_fit 시장 표기를 선택값({res['primary']}"
+                                  + (f"·{res['secondary']}" if res['secondary'] else "") + ")으로 고정했습니다."))
+    mf["primary"] = res["primary"]
+    mf["secondary"] = res["secondary"]
+    mf["data_as_of"] = res["data_as_of"]
+    mf["target_market"] = res["target_market"]
+    if not res["japan"]:
+        mf.pop("jp_track", None)
+
+    for k in ("regulation_flags", "localization_conditions", "risks", "verification_required"):
+        mf[k] = [x for x in _as_list(mf.get(k)) if x not in (None, "")]
+    mf["regulation_flags"] = [f for f in mf["regulation_flags"] if isinstance(f, dict)]
+
+    # 축 정리 + 근거 등급 검사
+    axes, demoted = [], 0
+    for a in _as_list(mf.get("axes")):
+        if not isinstance(a, dict):
+            continue
+        try:
+            stars = int(round(float(a.get("stars", 0))))
+        except Exception:
+            stars = 0
+        a["stars"] = max(0, min(5, stars))
+        if not a.get("market"):
+            a["market"] = res["primary"]
+        evs = []
+        for ev in _as_list(a.get("evidence")):
+            if isinstance(ev, str):
+                ev = {"grade": "INFERENCE", "source": "", "text": ev}
+            if not isinstance(ev, dict):
+                continue
+            g = str(ev.get("grade", "")).strip().upper()
+            if g not in MARKET_GRADES:
+                g = "INFERENCE"
+            src = str(ev.get("source", "") or "").strip()
+            # VERIFIED는 출처가 있고, 그 출처가 VN 렌즈 ID일 때만 인정
+            if g == "VERIFIED" and (not src or not re.match(r"^S\d+", src) or a["market"] != "VN"):
+                g = "INFERENCE"
+                demoted += 1
+            ev["grade"], ev["source"] = g, src
+            evs.append(ev)
+        a["evidence"] = evs
+        axes.append(a)
+    mf["axes"] = axes
+
+    if demoted:
+        notes.append(("caption", f"출처가 없거나 출처 표시가 없는 시장의 VERIFIED 근거 {demoted}건을 INFERENCE로 낮췄습니다."))
+
+    # 일본 트랙 미해당 → 일본 축 0점
+    if res["japan"] and str(mf.get("jp_track", "")).upper() in ("", "NONE"):
+        mf["jp_track"] = "NONE"
+        for a in axes:
+            if a.get("market") == "JP":
+                a["stars"] = 0
+
+    if res["vietnam"]:
+        vn_codes = {a.get("code") for a in axes if a.get("market") == "VN"}
+        if len(vn_codes) < 8:
+            notes.append(("warning", f"베트남 시장 8축 중 {len(vn_codes)}축만 채워졌습니다. 재분석을 권합니다."))
+
+    data["market_fit"] = mf
+    return notes
+
+
+def summarize_market_fit(analysis) -> str:
+    """CHRIS market_fit → SHIHO용 요약 (렌즈 원문은 넣지 않는다)"""
+    mf = analysis.get("market_fit", {}) if isinstance(analysis, dict) else {}
+    if not isinstance(mf, dict) or not mf:
+        return ""
+    lines = [
+        "[시장 적합성 요약 — CHRIS 판정]",
+        f"1차 시장: {market_label(mf.get('primary',''))} / 2차 시장: {market_label(mf.get('secondary','')) or '없음'}",
+        f"판정: {mf.get('verdict','')} — {mf.get('verdict_reason','')}",
+        f"시장 장르군: {mf.get('genre_group','')}",
+    ]
+    weak = []
+    for a in mf.get("axes", []) or []:
+        if not isinstance(a, dict):
+            continue
+        try:
+            s = int(a.get("stars", 0))
+        except Exception:
+            s = 0
+        if s <= 2:
+            ev = "; ".join([f"[{e.get('grade','')}] {e.get('text','')}"
+                            for e in (a.get("evidence") or []) if isinstance(e, dict)][:2])
+            weak.append(f"  - {a.get('market','')} {a.get('code','')} {a.get('name','')}: {s}/5 — {ev}")
+    if weak:
+        lines.append("약한 축 (2점 이하):")
+        lines.extend(weak)
+    flags = [f for f in (mf.get("regulation_flags") or []) if isinstance(f, dict)]
+    if flags:
+        lines.append("규제 플래그:")
+        for f in flags:
+            lines.append(f"  - {f.get('scene','')} / {f.get('clause','')} / {f.get('issue','')}"
+                         + (f" / 예상 등급 {f.get('expected_rating')}" if f.get("expected_rating") else ""))
+    conds = [c for c in (mf.get("localization_conditions") or []) if c]
+    if conds:
+        lines.append("현지화 조건:")
+        lines.extend([f"  - {c}" for c in conds])
+    return "\n".join(lines)
+
+
+MARKET_RX_RULES_BLOCK = """[MARKET RX — 시장 처방 규칙]
+1. 시장 관련 처방은 washing_table에 넣지 말고 market_rx 배열에만 넣는다. washing_table과 suggestions에는 시장 이유의 처방을 쓰지 않는다.
+2. market_rx는 원고의 인물·사건·결말을 바꾸는 처방이 아니다. 규제 조항 회피를 위한 연출 수위 조정, 현지 고증 보강,
+   관객 접근성 보강처럼 원고의 방향을 유지하는 조정만 허용한다.
+3. 보호 자산(Protected Assets)을 건드리는 시장 처방은 쓰지 않는다. 충돌하면 prescription을 비우고 conflict_with_asset에 충돌 내용만 기록한다.
+4. 모든 market_rx 항목은 optional: true다. 작가가 채택 여부를 결정한다.
+5. 각 항목에 근거 등급(grade)과 근거가 된 market_fit 축 코드 또는 regulation_flags 조항(linked)을 붙인다."""
+
+MARKET_RX_SCHEMA = '''  "market_rx": [
+    {
+      "target": "S#번호 또는 구간",
+      "linked": "M8 / 근거 조항 등",
+      "prescription": "처방 1~2문장 (보호 자산 충돌 시 빈 문자열)",
+      "keeps": "이 처방이 유지하는 원고의 방향 1줄",
+      "conflict_with_asset": "",
+      "grade": "INFERENCE",
+      "optional": true
+    }
+  ],
+'''
+
+
+def build_market_rx_block(analysis) -> dict:
+    """SHIHO용 시장 블록. market_fit이 없으면 빈 블록."""
+    summary = summarize_market_fit(analysis)
+    if not summary:
+        return {"block": "", "schema": ""}
+    return {"block": summary + "\n\n" + MARKET_RX_RULES_BLOCK, "schema": MARKET_RX_SCHEMA}
+
+
+def normalize_market_rx(washing: dict) -> int:
+    """SHIHO 응답의 market_rx 정규화 (washing을 직접 수정). 항목 수 반환."""
+    if not isinstance(washing, dict):
+        return 0
+    out = []
+    for r in _as_list(washing.get("market_rx")):
+        if not isinstance(r, dict):
+            continue
+        g = str(r.get("grade", "")).strip().upper()
+        r["grade"] = g if g in MARKET_GRADES else "INFERENCE"
+        if r["grade"] == "VERIFIED" and not re.search(r"S\d+", str(r.get("linked", ""))):
+            r["grade"] = "INFERENCE"
+        r["optional"] = True  # 자동 적용 금지 — 작가 선택 사항
+        for k in ("target", "linked", "prescription", "keeps", "conflict_with_asset"):
+            r[k] = str(r.get(k, "") or "")
+        out.append(r)
+    washing["market_rx"] = out
+    return len(out)
+
+
+def summarize_regulation_redlines(analysis) -> str:
+    """MOON용 — 시장 규제 레드라인 (수정 지시가 아님)"""
+    mf = analysis.get("market_fit", {}) if isinstance(analysis, dict) else {}
+    flags = [f for f in (mf.get("regulation_flags") or [])] if isinstance(mf, dict) else []
+    flags = [f for f in flags if isinstance(f, dict)]
+    if not flags:
+        return ""
+    lines = [f"  - {f.get('clause','')} — {f.get('issue','')} (원본 위치: {f.get('scene','')})" for f in flags]
+    return ("[시장 규제 레드라인 — 리라이트 씬에서 새로 만들지 말 것]\n"
+            + "\n".join(lines) + "\n"
+            "이 목록은 수정 지시가 아니다. 기존 원고의 해당 묘사를 지우라는 뜻이 아니며, "
+            "MOON이 새로 쓰는 씬에서 같은 위험을 추가로 만들지 말라는 뜻이다.")
+
+
+# =================================================================
 # [4] 문제유형 10개 (Washing Table 진단용)
 # =================================================================
 PROBLEM_TYPES = [
@@ -877,8 +1300,9 @@ PROBLEM_TYPES = [
 # =================================================================
 # [5] ANALYSIS PROMPT BUILDER (CHRIS)
 # =================================================================
-def build_analysis_prompt(script_text: str, writer_ref: dict = None) -> str:
-    """CHRIS 분석 프롬프트 — 장르 자동 감지 후 Rule Pack + OPENING MASTERY 주입"""
+def build_analysis_prompt(script_text: str, writer_ref: dict = None,
+                          target_market: str = DEFAULT_TARGET_MARKET) -> str:
+    """CHRIS 분석 프롬프트 — 장르 자동 감지 후 Rule Pack + OPENING MASTERY + MARKET LENS 주입"""
     # 오프닝 6기법 참조 텍스트 (장르 무관 — CHRIS는 역추적 진단)
     all_techniques = "\n".join([
         f"  - {code}: {t['name']} — {t['core']} (시그니처: {t['signature']})"
@@ -890,6 +1314,11 @@ def build_analysis_prompt(script_text: str, writer_ref: dict = None) -> str:
     ])
     dopamine_list = "\n".join([f"  - {k}: {v}" for k, v in DOPAMINE_SIX_SENSES.items()])
     profile_catalog = get_profile_catalog_block()
+
+    # v2.4 — 시장 렌즈 (4축 점수와 분리된 market_fit 블록)
+    market = build_market_fit_block(target_market)
+    market_block = market["block"]
+    market_schema = market["schema"]
 
     # Writer Engine 세션 참조 블록 (선택) — 보조 근거로만 사용
     writer_block = ""
@@ -959,6 +1388,8 @@ CHRIS는 "생성자"가 아니라 "진단자"다. 다음 순서로 오프닝을 
 {DOPAMINE_VS_PROVOCATION_WARNING}
 
 {profile_catalog}
+
+{market_block}
 
 {writer_block}
 
@@ -1101,7 +1532,7 @@ CHRIS는 "생성자"가 아니라 "진단자"다. 다음 순서로 오프닝을 
     "compliance_score": 0,
     "missing_elements": ["누락 요소1","누락 요소2"],
     "doctoring": "장르 문법 준수도 종합 코멘트 3~4줄. 장르적 재미의 핵심이 어디서 살아있고 어디서 약한지."
-  }}
+  }}{market_schema}
 }}
 
 [분석할 시나리오]
@@ -1141,6 +1572,10 @@ def build_doctoring_prompt(script_text: str, analysis: dict, retry_note: str = "
     gate_block = get_prescription_gate_block(profile_res)
     genre_axes_summary = summarize_genre_axes(analysis.get("genre_compliance", {}))
     protected_block = summarize_protected_assets(analysis)
+    # v2.4 — 시장 처방 (washing_table과 분리)
+    market_rx = build_market_rx_block(analysis)
+    market_rx_block = market_rx["block"]
+    market_rx_schema = market_rx["schema"]
     profile_banner = (
         f"적용 프로파일: {profile_res.get('genre_label','')} "
         f"(profile_id: {profile_res.get('profile_id','')} / source: {profile_res.get('source','')})"
@@ -1228,6 +1663,8 @@ CHRIS가 분석한 결과를 바탕으로, 시퀀스 단위의 정밀 진단과 
 
 {protected_block}
 
+{market_rx_block}
+
 {dialogue_axes_block}
 
 {gate_block}
@@ -1303,7 +1740,7 @@ SHIHO는 "작가의 원래 의도를 존중하면서 기법만 강화"하는 교
 
 [JSON 출력 스키마]
 {{
-{profile_schema}  "opening_rx": {{
+{profile_schema}{market_rx_schema}  "opening_rx": {{
     "respect_intent": true,
     "intent_kept_technique": "작가의 원래 의도를 유지하는 기법 코드 (또는 기법 전환이 필요할 때 새 기법 코드)",
     "switch_reason": "기법 전환이 필요한 경우에만 이유 2줄 / 유지면 빈 문자열",
@@ -1474,6 +1911,8 @@ def build_rewrite_prompt(script_text: str, analysis: dict, washing: dict) -> str
     profile_res = resolve_genre_profile_from_analysis(analysis)
     protected_block = summarize_protected_assets(analysis)
     genre_axes_summary = summarize_genre_axes(analysis.get("genre_compliance", {}))
+    # v2.4 — 시장 규제 레드라인만 전달 (market_rx는 MOON에 넘기지 않는다)
+    redline_block = summarize_regulation_redlines(analysis)
 
     # SHIHO의 장르 정밀축 처방 → MOON 지시로 전환
     gax_rx = washing.get("genre_axis_rx", [])
@@ -1578,6 +2017,8 @@ DNA 시그니처: {dna['dna_signature']}
 5. 복합 장르일 경우 본질 장르 DNA로 오프닝을 연다.
 
 {protected_block}
+
+{redline_block}
 
 {genre_axes_summary}
 

@@ -13,6 +13,10 @@ from prompt import (
     # v2.3 — 장르 정밀 진단 프로파일
     resolve_genre_profile_from_analysis, check_prescription_balance,
     get_profile_load_error, list_genre_profiles,
+    # v2.4 — Market Lens 연동
+    MLP, DEFAULT_TARGET_MARKET, MARKET_LENS_VERSION,
+    list_market_options, build_target_market_string, resolve_market, market_label,
+    normalize_market_fit, normalize_market_rx, get_market_lens_error,
 )
 
 # =================================================================
@@ -30,6 +34,7 @@ for k, v in {
     "washing": None,
     "rewriting": None,
     "writer_ref": None,
+    "target_market": DEFAULT_TARGET_MARKET,
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -560,12 +565,14 @@ def extract_text(uploaded_file):
 # =================================================================
 # [4] BLUE — 분석 비서 (prompt.py 빌더 사용)
 # =================================================================
-def run_blue(text, client, writer_ref=None):
+def run_blue(text, client, writer_ref=None, target_market=DEFAULT_TARGET_MARKET):
     from prompt import SYSTEM_PROMPT
-    prompt = build_analysis_prompt(text, writer_ref=writer_ref)
+    prompt = build_analysis_prompt(text, writer_ref=writer_ref, target_market=target_market)
     # SYSTEM_PROMPT가 user 메시지 안에 포함되어 있으므로 제거 후 system으로 분리
     user_prompt = prompt.replace(SYSTEM_PROMPT, '').strip()
-    raw = call_claude(client, user_prompt, max_tokens=12000, system=SYSTEM_PROMPT)
+    # v2.4: 베트남 8축 market_fit이 붙으면 출력이 길어지므로 상한을 높인다
+    chris_tokens = 14000 if resolve_market(target_market).get('vietnam') else 12000
+    raw = call_claude(client, user_prompt, max_tokens=chris_tokens, system=SYSTEM_PROMPT)
     if not raw:
         st.error("❌ API 응답이 없습니다.")
         return None
@@ -621,6 +628,17 @@ def run_blue(text, client, writer_ref=None):
             )
     except Exception as e:
         st.caption(f"⚠️ 장르 프로파일 해석 생략: {type(e).__name__}")
+
+    # ── v2.4: 시장 적합성 정규화 (선택값이 최종 권위, 4축 점수와 분리) ──
+    try:
+        for level, msg in normalize_market_fit(data, target_market):
+            if level == 'warning':
+                st.warning(f"⚠️ {msg}")
+            else:
+                st.caption(f"ℹ️ {msg}")
+    except Exception as e:
+        data['market_fit'] = {}
+        st.caption(f"⚠️ 시장 적합성 정리 생략: {type(e).__name__}")
 
     return data
 
@@ -733,6 +751,13 @@ def run_jean(text, analysis, client):
                     data['axis_gate'] = gate
     except Exception as e:
         st.caption(f"⚠️ 처방 균형 게이트 생략: {type(e).__name__}")
+
+    # ── v2.4: 시장 처방 정리 (optional 고정, washing_table과 분리 유지) ──
+    try:
+        normalize_market_rx(data)
+    except Exception as e:
+        data['market_rx'] = []
+        st.caption(f"⚠️ 시장 처방 정리 생략: {type(e).__name__}")
 
     return data
 
@@ -1629,6 +1654,11 @@ def render_analysis(data):
     # ═══════════════════════════════════════════════════════════════
     render_protected_assets(data)
 
+    # ═══════════════════════════════════════════════════════════════
+    # 8-F. 시장 적합성 (v2.4 신규)
+    # ═══════════════════════════════════════════════════════════════
+    render_market_fit(data)
+
 
 SEVERITY_STYLE = {
     'High':   ('#FFF3EE', '#FF6432', '#CC3300', '심각'),
@@ -2002,6 +2032,223 @@ def render_genre_axis_rx(data):
                     f'<span style="font-size:0.85rem;color:#191970;line-height:1.6;">{eff}</span></div>',
                     unsafe_allow_html=True
                 )
+
+
+# =================================================================
+# [7-M] 시장 적합성 / 시장 처방 렌더러 (v2.4)
+# =================================================================
+GRADE_STYLE = {
+    'VERIFIED':              ('#EDFAF3', '#2EC484', '#1A7A50', 'VERIFIED'),
+    'INFERENCE':             ('#EEF0FA', '#191970', '#191970', 'INFERENCE'),
+    'CREATIVE_JUDGMENT':     ('#F3EEFA', '#B79FE0', '#6B3FA0', 'CREATIVE'),
+    'VERIFICATION_REQUIRED': ('#F4F5F9', '#94A3B8', '#4A5568', '검증 필요'),
+}
+MARKET_VERDICT_STYLE = {
+    '적합':   ('#EDFAF3', '#2EC484', '#1A7A50'),
+    '조건부': ('#FFFBE6', '#FFCB05', '#B8860B'),
+    '부적합': ('#FFF3EE', '#FF6432', '#CC3300'),
+}
+
+
+def _grade_badge(grade):
+    bg, bd, fc, label = GRADE_STYLE.get(str(grade or '').upper(), GRADE_STYLE['INFERENCE'])
+    return (f'<span style="background:{bg};color:{fc};border:1px solid {bd};padding:1px 8px;'
+            f'border-radius:20px;font-size:0.64rem;font-weight:800;white-space:nowrap;">{safe(label)}</span>')
+
+
+def _stars_text(n):
+    try:
+        n = max(0, min(5, int(n)))
+    except Exception:
+        n = 0
+    return '★' * n + '☆' * (5 - n)
+
+
+def _market_verdict_key(v):
+    v = str(v or '')
+    for k in ('부적합', '조건부', '적합'):   # '부적합'이 '적합'을 포함하므로 순서 중요
+        if k in v:
+            return k
+    return ''
+
+
+def render_market_fit(data):
+    """8-F. 시장 적합성 — 4축 점수와 별개 블록"""
+    mf = data.get('market_fit', {})
+    if not isinstance(mf, dict) or not mf:
+        return
+
+    prim = market_label(mf.get('primary', ''))
+    sec = market_label(mf.get('secondary', '')) or '없음'
+    as_of = safe(mf.get('data_as_of', ''))
+    vkey = _market_verdict_key(mf.get('verdict', ''))
+    v_bg, v_bd, v_fc = MARKET_VERDICT_STYLE.get(vkey, ('#F4F5F9', '#94A3B8', '#4A5568'))
+    chip = 'background:#EEF0FA;color:#191970;border:1px solid #C5CBE8;padding:4px 11px;border-radius:20px;font-size:0.72rem;font-weight:700;'
+
+    as_of_html = f'<span style="{chip}">자료 기준일(VN) {as_of}</span>' if as_of else ''
+    jp_html = ''
+    if mf.get('jp_track'):
+        jp_html = f'<span style="{chip}">일본 트랙 {safe(mf.get("jp_track",""))}</span>'
+
+    head = (
+        '<div class="report-card">'
+        '<h3>8-F. 시장 적합성 (Market Fit)</h3>'
+        '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
+        f'<span style="background:#191970;color:#FFCB05;padding:5px 13px;border-radius:10px;font-weight:800;font-size:0.82rem;">1차 {safe(prim)}</span>'
+        f'<span style="{chip}">2차 {safe(sec)}</span>'
+        f'<span style="background:{v_bg};color:{v_fc};border:1px solid {v_bd};padding:4px 13px;border-radius:20px;font-size:0.78rem;font-weight:800;">{safe(mf.get("verdict","-"))}</span>'
+        f'{as_of_html}{jp_html}'
+        '</div>'
+        '<div style="font-size:0.78rem;color:#4A5568;line-height:1.6;margin-top:10px;">'
+        '시장 적합성은 4축 점수(작품 점수)와 별개로 산출합니다. 시장을 바꿔도 작품 점수는 바뀌지 않습니다.'
+        '</div></div>'
+    )
+    st.markdown(head, unsafe_allow_html=True)
+
+    reason = safe(mf.get('verdict_reason', ''))
+    if reason:
+        st.markdown(
+            f'<div style="background:{v_bg};border-left:3px solid {v_bd};padding:11px 13px;border-radius:6px;margin-bottom:8px;">'
+            '<div style="font-size:0.68rem;font-weight:800;color:#191970;margin-bottom:4px;">판정 근거</div>'
+            f'<div style="font-size:0.86rem;color:#191970;line-height:1.7;">{reason}</div></div>',
+            unsafe_allow_html=True
+        )
+
+    c1, c2 = st.columns(2, gap="small")
+    with c1:
+        st.markdown(
+            '<div style="background:#F8F9FF;border:1px solid #E6E9EF;border-radius:8px;padding:9px 12px;margin-bottom:8px;">'
+            '<div style="font-size:0.66rem;font-weight:800;color:#6B7280;margin-bottom:3px;">시장 장르군</div>'
+            f'<div style="font-size:0.86rem;font-weight:700;color:#191970;">{safe(mf.get("genre_group","-"))}</div></div>',
+            unsafe_allow_html=True
+        )
+    with c2:
+        st.markdown(
+            '<div style="background:#F8F9FF;border:1px solid #E6E9EF;border-radius:8px;padding:9px 12px;margin-bottom:8px;">'
+            '<div style="font-size:0.66rem;font-weight:800;color:#6B7280;margin-bottom:3px;">구매자 좌표</div>'
+            f'<div style="font-size:0.86rem;font-weight:700;color:#191970;">{safe(mf.get("buyer_coordinate","-"))}</div></div>',
+            unsafe_allow_html=True
+        )
+
+    # ── 축별 별점 + 근거 ──
+    axes = [a for a in (mf.get('axes') or []) if isinstance(a, dict)]
+    for a in axes:
+        stars = a.get('stars', 0)
+        try:
+            s_num = int(stars)
+        except Exception:
+            s_num = 0
+        s_color = '#2EC484' if s_num >= 4 else ('#B8860B' if s_num >= 2 else '#CC3300')
+        a_head = (
+            '<div style="background:#FFFFFF;border:1px solid #E6E9EF;border-left:4px solid #191970;border-radius:10px 10px 0 0;padding:11px 15px 7px;margin-top:8px;">'
+            f'<span style="background:#191970;color:#FFFFFF !important;padding:2px 8px;border-radius:4px;font-weight:900;font-size:0.68rem;">{safe(a.get("market",""))} {safe(a.get("code",""))}</span>'
+            f'<span style="font-weight:800;margin-left:9px;color:#191970;font-size:0.9rem;">{safe(a.get("name",""))}</span>'
+            f'<span style="float:right;font-weight:900;color:{s_color};font-size:0.95rem;letter-spacing:0.05em;">{_stars_text(s_num)} {s_num}/5</span>'
+            '</div>'
+        )
+        st.markdown(a_head, unsafe_allow_html=True)
+        for ev in (a.get('evidence') or []):
+            if not isinstance(ev, dict):
+                continue
+            src = safe(ev.get('source', ''))
+            src_html = f'<span style="color:#6B7280;font-size:0.7rem;margin-left:6px;">{src}</span>' if src else ''
+            ev_html = (
+                '<div style="background:#FAFAFA;border-left:3px solid #E0E4F0;padding:7px 12px;margin-bottom:4px;font-size:0.84rem;color:#191970;line-height:1.6;">'
+                f'{_grade_badge(ev.get("grade",""))}{src_html} '
+                f'<span>{safe(ev.get("text",""))}</span></div>'
+            )
+            st.markdown(ev_html, unsafe_allow_html=True)
+
+    # ── 규제 플래그 (네이티브 표) ──
+    flags = [f for f in (mf.get('regulation_flags') or []) if isinstance(f, dict)]
+    if flags:
+        st.markdown(
+            '<div style="font-size:0.85rem;font-weight:800;color:#CC3300;margin:16px 0 6px;">⚖️ 규제 플래그</div>',
+            unsafe_allow_html=True
+        )
+        rows = [{
+            '조항': str(f.get('clause', '')),
+            '씬': str(f.get('scene', '')),
+            '문제': str(f.get('issue', '')),
+            '예상 등급': str(f.get('expected_rating', '')),
+            '근거 등급': str(f.get('grade', '')),
+        } for f in flags]
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+
+    def _list_card(title, items, bg, bd, fc):
+        items = [i for i in (items or []) if i]
+        if not items:
+            return
+        lis = ''.join([f'<li style="margin-bottom:5px;line-height:1.6;color:#191970;font-size:0.85rem;">{safe(i)}</li>' for i in items])
+        st.markdown(
+            f'<div style="background:{bg};border-left:3px solid {bd};padding:10px 13px;border-radius:6px;margin:8px 0;">'
+            f'<div style="font-size:0.7rem;font-weight:800;color:{fc};margin-bottom:5px;">{title}</div>'
+            f'<ul style="margin:0;padding-left:18px;">{lis}</ul></div>',
+            unsafe_allow_html=True
+        )
+
+    _list_card('현지화 조건', mf.get('localization_conditions'), '#EDFAF3', '#2EC484', '#1A7A50')
+    _list_card('시장 리스크', mf.get('risks'), '#FFF3EE', '#FF6432', '#CC3300')
+    _list_card('추가 검증 필요', mf.get('verification_required'), '#F4F5F9', '#94A3B8', '#4A5568')
+
+    # ── VN 출처 ──
+    codes = [mf.get('primary'), mf.get('secondary')]
+    if 'VN' in codes and MLP is not None:
+        try:
+            with st.expander("베트남 시장 렌즈 출처 (S1~S10)", expanded=False):
+                st.text(MLP.get_vn_sources_text())
+        except Exception:
+            pass
+
+
+def render_market_rx(data):
+    """10-B. 시장 처방 — 선택 적용 (washing_table과 분리)"""
+    rx = [r for r in (data.get('market_rx') or []) if isinstance(r, dict)]
+    if not rx:
+        return
+    st.markdown(
+        '<div class="report-card"><h3>10-B. 시장 처방 (Market RX) — 선택 적용</h3>'
+        '<div style="font-size:0.83rem;color:#4A5568;line-height:1.7;">'
+        '목표 시장 기준의 조정안입니다. 원고의 인물·사건·결말은 바꾸지 않으며, 작가가 채택한 항목만 각색에 반영합니다.'
+        '</div></div>',
+        unsafe_allow_html=True
+    )
+    for r in rx:
+        conflict = safe(r.get('conflict_with_asset', ''))
+        bd = '#FF6432' if conflict else '#B79FE0'
+        head = (
+            f'<div style="background:#FFFFFF;border:1px solid #E6E9EF;border-left:4px solid {bd};border-radius:10px 10px 0 0;padding:11px 15px 7px;margin-top:9px;">'
+            '<span style="background:#F4F5F9;color:#4A5568;border:1px solid #94A3B8;padding:2px 8px;border-radius:20px;font-size:0.64rem;font-weight:800;">선택 적용</span>'
+            f'<span style="font-weight:800;margin-left:8px;color:#191970;font-size:0.88rem;">{safe(r.get("target",""))}</span>'
+            f'<span style="color:#6B7280;font-size:0.74rem;margin-left:8px;">근거 {safe(r.get("linked",""))}</span> '
+            f'{_grade_badge(r.get("grade",""))}'
+            '</div>'
+        )
+        st.markdown(head, unsafe_allow_html=True)
+        presc = safe(r.get('prescription', ''))
+        if presc:
+            st.markdown(
+                '<div style="background:#F3EEFA;padding:10px 13px;border-radius:6px;border-left:3px solid #B79FE0;margin-bottom:6px;">'
+                '<div style="font-size:0.68rem;font-weight:800;color:#6B3FA0;margin-bottom:4px;">처방</div>'
+                f'<div style="font-size:0.86rem;color:#191970;line-height:1.7;">{presc}</div></div>',
+                unsafe_allow_html=True
+            )
+        keeps = safe(r.get('keeps', ''))
+        if keeps:
+            st.markdown(
+                '<div style="background:#EDFAF3;padding:9px 12px;border-radius:6px;border-left:3px solid #2EC484;margin-bottom:6px;">'
+                '<strong style="font-size:0.68rem;color:#1A7A50;">유지하는 방향:</strong> '
+                f'<span style="font-size:0.85rem;color:#191970;line-height:1.6;">{keeps}</span></div>',
+                unsafe_allow_html=True
+            )
+        if conflict:
+            st.markdown(
+                '<div style="background:#FFF5F5;padding:9px 12px;border-radius:6px;border-left:3px solid #FF6432;margin-bottom:10px;">'
+                '<strong style="font-size:0.68rem;color:#CC3300;">보호 자산 충돌 — 처방 보류:</strong> '
+                f'<span style="font-size:0.85rem;color:#191970;line-height:1.6;">{conflict}</span></div>',
+                unsafe_allow_html=True
+            )
+
 
 
 def render_washing(data):
@@ -2400,6 +2647,9 @@ def render_washing(data):
         </div>""", unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
+    # 10-B. 시장 처방 (v2.4 신규)
+    render_market_rx(data)
+
 
 def render_rewriting(data):
     rewrite = data.get('rewriting', {})
@@ -2648,8 +2898,16 @@ def export_diagnosis_json(item, level="shiho"):
 
         # 전체 의견: target_reason 우선, 없으면 verdict_rationale
         moon_opinion_text = target_reason or verdict_rationale
-        # 시장 방향: verdict_rationale (CHRIS의 상업적 판단 부분)
-        moon_market_direction = verdict_rationale
+        # 시장 방향: v2.4 — market_fit이 있으면 시장 판정 + 근거 + 현지화 조건, 없으면 기존처럼 verdict_rationale
+        _mf = item.get('market_fit', {}) if isinstance(item.get('market_fit'), dict) else {}
+        if _mf:
+            _parts = [f"[{_mf.get('verdict','')}] {_mf.get('verdict_reason','')}".strip()]
+            _conds = [str(c) for c in (_mf.get('localization_conditions') or []) if c]
+            if _conds:
+                _parts.append("현지화 조건: " + " / ".join(_conds))
+            moon_market_direction = "\n".join([x for x in _parts if x])
+        else:
+            moon_market_direction = verdict_rationale
         # 장르 강화: SHIHO genre_fun_recovery
         moon_genre_strengthening = gfr_direction
         # 차별성/오프닝 방향: SHIHO opening_rx
@@ -2673,6 +2931,8 @@ def export_diagnosis_json(item, level="shiho"):
         # v2.3 — 장르 정밀 진단 프로파일
         "genre_profile":     item.get('genre_profile', {}),
         "protected_assets":  item.get('protected_assets', []),
+        # v2.4 — 시장 적합성 (4축 점수와 별개)
+        "market_fit":        item.get('market_fit', {}),
     }
 
     shiho_prescription = None
@@ -2688,11 +2948,22 @@ def export_diagnosis_json(item, level="shiho"):
             "axis_distribution":    item.get('axis_distribution', {}),
             "axis_gate":            item.get('axis_gate', {}),
             "protected_assets_note": item.get('protected_assets_note', ''),
+            # v2.4 — 시장 처방 (optional, washing_table과 별개)
+            "market_rx":            item.get('market_rx', []),
         }
     
     moon_rewrite = None
     if level == "full":
         moon_rewrite = item.get('rewriting', {})
+
+    # ── v2.4 시장 좌표 ──
+    _mf_all = item.get('market_fit', {}) if isinstance(item.get('market_fit'), dict) else {}
+    _market_context = {
+        "primary":      _mf_all.get('primary', ''),
+        "secondary":    _mf_all.get('secondary', ''),
+        "data_as_of":   _mf_all.get('data_as_of', ''),
+        "lens_version": MARKET_LENS_VERSION if _mf_all else "",
+    }
 
     # ─────────────────────────────────────────────────────────
     # 최종 페이로드 — A(Revise 흡수) + B(원본) 동시 수록
@@ -2701,8 +2972,8 @@ def export_diagnosis_json(item, level="shiho"):
         # ── 메타 정보 ──
         "title":            item.get('title', ''),
         "report_date":      datetime.now().strftime('%Y-%m-%d'),
-        "engine_version":   "Rewrite Engine v2.3",
-        "schema_version":   "1.1",
+        "engine_version":   "Rewrite Engine v2.4",
+        "schema_version":   "1.2",
 
         # ── [A] Revise Engine v2.3 자동 흡수 키 (평면) ──
         "rewrite_suggestions": rewrite_suggestions,
@@ -2718,6 +2989,12 @@ def export_diagnosis_json(item, level="shiho"):
         "genre_axes":          (item.get('genre_compliance', {}) or {}).get('genre_axes', {}),
         "genre_axis_rx":       item.get('genre_axis_rx', []) if level in ("shiho", "full") else [],
         "axis_distribution":   item.get('axis_distribution', {}) if level in ("shiho", "full") else {},
+
+        # ── [A-3] v2.4 신규 평면 키 — 시장 좌표 / 시장 처방 / 규제 체크리스트 ──
+        "market_context":      _market_context,
+        "market_fit":          _mf_all,
+        "market_rx":           (item.get('market_rx', []) or []) if level in ("shiho", "full") else [],
+        "regulation_flags":    list(_mf_all.get('regulation_flags', []) or []),
 
         # ── [B] 원본 데이터 보존 (사용자 검증·참고용) ──
         "chris_analysis":     chris_analysis,
@@ -2745,7 +3022,15 @@ def export_diagnosis_json(item, level="shiho"):
         "weak_zone_count":    len(weak_zone_scenes),
         "protected_asset_count": len(item.get('protected_assets', []) or []),
         "rewrite_source":     "moon_scenes" if (level == "full" and moon_scenes) else ("shiho_heuristic" if rewrite_suggestions else "none"),
-        "schema_note":        "Revise Engine v2.3 자동 흡수 키 + 원본 데이터 동시 수록. protected_assets는 수정 금지 대상.",
+        # v2.4 — 시장 좌표
+        "target_market":      _mf_all.get('target_market', ''),
+        "market_primary":     _mf_all.get('primary', ''),
+        "market_secondary":   _mf_all.get('secondary', ''),
+        "market_data_as_of":  _mf_all.get('data_as_of', ''),
+        "market_rx_count":    len(payload.get('market_rx', []) or []),
+        "schema_note":        ("Revise Engine v2.3 자동 흡수 키 + 원본 데이터 동시 수록. protected_assets는 수정 금지 대상. "
+                               "market_rx는 optional 처방이며 rewrite_suggestions와 별개 — 자동 적용하지 말 것. "
+                               "regulation_flags는 각색본 검증용 체크리스트."),
     }
     
     json_str = json.dumps(payload, ensure_ascii=False, indent=2)
@@ -2804,6 +3089,8 @@ def build_session_snapshot():
         "washing":         washing,
         "rewriting":       rewriting,
         "writer_ref":      st.session_state.get('writer_ref') or None,
+        # v2.4 — 목표 시장
+        "target_market":   st.session_state.get('target_market') or DEFAULT_TARGET_MARKET,
     }
     return json.dumps(payload, ensure_ascii=False, indent=2).encode('utf-8')
 
@@ -2845,6 +3132,11 @@ def restore_session_snapshot(raw_bytes):
     wref = payload.get('writer_ref')
     if isinstance(wref, dict) and wref.get('ok'):
         st.session_state.writer_ref = wref
+
+    # v2.4 — 목표 시장 복원 (이전 버전 저장 파일에는 없으므로 기본값)
+    st.session_state.target_market = str(payload.get('target_market') or DEFAULT_TARGET_MARKET)
+    for k in ('_mk_primary', '_mk_secondary'):
+        st.session_state.pop(k, None)
 
     um = payload.get('upload_meta', {})
     if isinstance(um, dict):
@@ -2903,7 +3195,8 @@ def create_docx(item, level="full"):
             "genre_axis_rx":      item.get("genre_axis_rx", []),
             "axis_distribution":  item.get("axis_distribution", {}),
             "axis_gate":          item.get("axis_gate", {}),
-            "protected_assets_note": item.get("protected_assets_note", "")
+            "protected_assets_note": item.get("protected_assets_note", ""),
+            "market_rx":          item.get("market_rx", [])
         }
         rewriting_payload = {"rewriting": {}}  # MOON 제거
     else:  # full
@@ -2916,7 +3209,8 @@ def create_docx(item, level="full"):
             "genre_axis_rx":      item.get("genre_axis_rx", []),
             "axis_distribution":  item.get("axis_distribution", {}),
             "axis_gate":          item.get("axis_gate", {}),
-            "protected_assets_note": item.get("protected_assets_note", "")
+            "protected_assets_note": item.get("protected_assets_note", ""),
+            "market_rx":          item.get("market_rx", [])
         }
         rewriting_payload = {"rewriting": item.get("rewriting", {})}
 
@@ -2927,6 +3221,13 @@ def create_docx(item, level="full"):
         "rewriting": rewriting_payload,
         "export_level": level  # gen_docx.js가 참조 (디버깅/향후 확장용)
     }
+    # v2.4 — 베트남 시장 렌즈 출처 (gen_docx.js 8-F 하단 표기용)
+    try:
+        _mf = item.get("market_fit", {}) if isinstance(item.get("market_fit"), dict) else {}
+        if MLP is not None and "VN" in (_mf.get("primary"), _mf.get("secondary")):
+            report_data["market_sources_text"] = MLP.get_vn_sources_text()
+    except Exception:
+        pass
 
     tmp_dir = tempfile.mkdtemp()
     json_path   = os.path.join(tmp_dir, "report_data.json")
@@ -3258,6 +3559,61 @@ def _create_docx_fallback(item, level="full"):
                     elif a:
                         doc.add_paragraph(f"🔒 {safe_str(a)}")
 
+            # ─── 7-F. 시장 적합성 (v2.4) — 4축 점수와 별개 ───
+            mf = item.get('market_fit', {})
+            if isinstance(mf, dict) and mf:
+                doc.add_heading("7-F. 시장 적합성 (Market Fit)", 1)
+                doc.add_paragraph(
+                    f"1차 시장: {market_label(mf.get('primary',''))} / "
+                    f"2차 시장: {market_label(mf.get('secondary','')) or '없음'}"
+                    + (f" / 자료 기준일(VN): {safe_str(mf.get('data_as_of',''))}" if mf.get('data_as_of') else "")
+                )
+                doc.add_paragraph("시장 적합성은 4축 작품 점수와 별개로 산출합니다.")
+                doc.add_paragraph(f"판정: {safe_str(mf.get('verdict',''))} — {safe_str(mf.get('verdict_reason',''))}")
+                doc.add_paragraph(f"시장 장르군: {safe_str(mf.get('genre_group',''))}")
+                doc.add_paragraph(f"구매자 좌표: {safe_str(mf.get('buyer_coordinate',''))}")
+                if mf.get('jp_track'):
+                    doc.add_paragraph(f"일본 트랙: {safe_str(mf.get('jp_track',''))}")
+                for a in (mf.get('axes') or []):
+                    if not isinstance(a, dict):
+                        continue
+                    stars = min(max(safe_int(a.get('stars', 0)), 0), 5)
+                    doc.add_heading(
+                        f"[{safe_str(a.get('market',''))} {safe_str(a.get('code',''))}] {safe_str(a.get('name',''))} — "
+                        f"{'★'*stars}{'☆'*(5-stars)} {stars}/5", 2
+                    )
+                    for ev in (a.get('evidence') or []):
+                        if isinstance(ev, dict):
+                            src = f" ({safe_str(ev.get('source',''))})" if ev.get('source') else ""
+                            doc.add_paragraph(f"  [{safe_str(ev.get('grade',''))}]{src} {safe_str(ev.get('text',''))}")
+                flags = [f for f in (mf.get('regulation_flags') or []) if isinstance(f, dict)]
+                if flags:
+                    doc.add_heading("규제 플래그", 2)
+                    ftbl = doc.add_table(rows=1, cols=4)
+                    ftbl.style = 'Table Grid'
+                    for i, h in enumerate(['조항', '씬', '문제', '예상 등급']):
+                        ftbl.rows[0].cells[i].text = h
+                    for f in flags:
+                        r = ftbl.add_row().cells
+                        r[0].text = safe_str(f.get('clause',''))
+                        r[1].text = safe_str(f.get('scene',''))
+                        r[2].text = safe_str(f.get('issue',''))
+                        r[3].text = safe_str(f.get('expected_rating',''))
+                for title_, key_ in [("현지화 조건", 'localization_conditions'), ("시장 리스크", 'risks'),
+                                     ("추가 검증 필요", 'verification_required')]:
+                    items_ = [x for x in (mf.get(key_) or []) if x]
+                    if items_:
+                        doc.add_heading(title_, 2)
+                        for x in items_:
+                            doc.add_paragraph(f"• {safe_str(x)}")
+                if 'VN' in (mf.get('primary'), mf.get('secondary')) and MLP is not None:
+                    try:
+                        doc.add_heading("베트남 시장 렌즈 출처", 2)
+                        for line in MLP.get_vn_sources_text().split("\n"):
+                            doc.add_paragraph(line)
+                    except Exception:
+                        pass
+
             # ─── 7-C. OPENING RX (v2.1) — SHIHO 자료, level='chris'에서는 스킵 ───
             rx = item.get('opening_rx', {})
             if level != "chris" and isinstance(rx, dict) and rx:
@@ -3348,6 +3704,23 @@ def _create_docx_fallback(item, level="full"):
                         doc.add_paragraph(f"    🔄 대체 지정: {safe_str(r.get('replace_with',''))}")
                     if r.get('expected_effect'):
                         doc.add_paragraph(f"    🎯 기대 효과: {safe_str(r.get('expected_effect',''))}")
+
+            # 8-D. 시장 처방 (v2.4) — 선택 적용, washing_table과 별개
+            mrx = [r for r in (item.get('market_rx') or []) if isinstance(r, dict)]
+            if mrx:
+                doc.add_heading("8-D. 시장 처방 (Market RX) — 선택 적용", 1)
+                doc.add_paragraph("목표 시장 기준의 조정안입니다. 작가가 채택한 항목만 각색에 반영합니다.")
+                for r in mrx:
+                    doc.add_paragraph(
+                        f"[선택 적용] {safe_str(r.get('target',''))} — 근거 {safe_str(r.get('linked',''))} "
+                        f"[{safe_str(r.get('grade',''))}]"
+                    )
+                    if r.get('prescription'):
+                        doc.add_paragraph(f"    처방: {safe_str(r.get('prescription',''))}")
+                    if r.get('keeps'):
+                        doc.add_paragraph(f"    유지하는 방향: {safe_str(r.get('keeps',''))}")
+                    if r.get('conflict_with_asset'):
+                        doc.add_paragraph(f"    보호 자산 충돌 — 처방 보류: {safe_str(r.get('conflict_with_asset',''))}")
 
             # 9. 대사 워싱
             doc.add_heading("9. 대사 워싱 (Dialogue Washing)", 1)
@@ -3650,6 +4023,45 @@ def render_advanced_panel():
             pass
 
 
+def render_market_selector():
+    """v2.4 — 목표 시장 선택 (1차·2차). 자유 입력은 쓰지 않는다:
+    resolve_market_lens()가 키워드 등장 순서로 1·2차를 정하므로 선택값으로 문자열을 만든다."""
+    opts = list_market_options()
+    labels = [f"{flag} {label}".strip() for _, label, flag in opts]
+    plain = [label for _, label, _ in opts]
+    codes = [c for c, _, _ in opts]
+
+    cur = resolve_market(st.session_state.get('target_market') or DEFAULT_TARGET_MARKET)
+    p_idx = codes.index(cur['primary']) if cur['primary'] in codes else 0
+
+    st.markdown(
+        '<div style="font-weight:800;color:#191970;font-size:0.9rem;margin:6px 0 4px;">🌏 목표 시장</div>'
+        '<div style="font-size:0.78rem;color:#4A5568;line-height:1.6;margin-bottom:6px;">'
+        'CHRIS가 이 시장 기준으로 시장 적합성(별도 블록)을 진단합니다. 4축 작품 점수에는 반영하지 않습니다.'
+        '</div>',
+        unsafe_allow_html=True
+    )
+    m1, m2 = st.columns(2, gap="small")
+    with m1:
+        p_label = st.selectbox("1차 시장", labels, index=p_idx, key="_mk_primary")
+    p_i = labels.index(p_label)
+    sec_labels = ["없음"] + [l for i, l in enumerate(labels) if i != p_i]
+    s_default = 0
+    if cur['secondary'] and cur['secondary'] in codes and codes.index(cur['secondary']) != p_i:
+        s_default = sec_labels.index(labels[codes.index(cur['secondary'])])
+    if st.session_state.get('_mk_secondary') not in sec_labels:
+        st.session_state.pop('_mk_secondary', None)   # 1차를 바꿔 기존 2차 값이 사라진 경우
+    with m2:
+        s_label = st.selectbox("2차 시장", sec_labels, index=s_default, key="_mk_secondary")
+
+    s_plain = "" if s_label == "없음" else plain[labels.index(s_label)]
+    st.session_state.target_market = build_target_market_string(plain[p_i], s_plain)
+
+    err = get_market_lens_error()
+    if err:
+        st.caption(f"⚠️ {err} — 시장 적합성 없이 분석합니다.")
+
+
 def show_workspace():
     st.markdown("""
     <div style="text-align:center;padding:36px 0 8px;">
@@ -3707,6 +4119,7 @@ def show_workspace():
                             font-size:0.75rem;font-weight:800;">✓ 준비완료</div>
             </div>
             """, unsafe_allow_html=True)
+            render_market_selector()
             col1, col2, col3 = st.columns([2, 1, 2])
             with col2:
                 if st.button("🚀 분석 시작", use_container_width=True):
@@ -3733,7 +4146,8 @@ def show_workspace():
             if not api_key:
                 st.error("❌ ANTHROPIC_API_KEY가 Secrets에 없습니다. Streamlit Cloud → Settings → Secrets 확인")
                 return
-            r = run_blue(text, client, writer_ref=st.session_state.get('writer_ref'))
+            r = run_blue(text, client, writer_ref=st.session_state.get('writer_ref'),
+                       target_market=st.session_state.get('target_market') or DEFAULT_TARGET_MARKET)
             if r:
                 st.session_state.analysis = r
                 st.session_state.step = 2
@@ -3838,7 +4252,8 @@ def show_workspace():
             'genre_axis_rx':      st.session_state.washing.get('genre_axis_rx', []),
             'axis_distribution':  st.session_state.washing.get('axis_distribution', {}),
             'axis_gate':          st.session_state.washing.get('axis_gate', {}),
-            'protected_assets_note': st.session_state.washing.get('protected_assets_note', '')
+            'protected_assets_note': st.session_state.washing.get('protected_assets_note', ''),
+            'market_rx':          st.session_state.washing.get('market_rx', [])
         }
         title = re.sub(r'[/*?:"<>|]', '_', merged_shiho.get('title', '제목없음'))
         current_id = id(st.session_state.washing)
@@ -3913,6 +4328,7 @@ def show_workspace():
                     'axis_distribution':  st.session_state.washing.get('axis_distribution', {}),
                     'axis_gate':          st.session_state.washing.get('axis_gate', {}),
                     'protected_assets_note': st.session_state.washing.get('protected_assets_note', ''),
+                    'market_rx':          st.session_state.washing.get('market_rx', []),
                     'rewriting':          r.get('rewriting', {})
                 }
                 st.session_state.db.insert(0, full)
@@ -3987,6 +4403,9 @@ def show_workspace():
             if st.button("🔄 새 시나리오 분석", key="btn_new_analysis", use_container_width=True):
                 for k in ['step', 'raw_text', 'analysis', 'washing', 'rewriting', 'selected_item']:
                     st.session_state[k] = 0 if k == 'step' else None
+                st.session_state.target_market = DEFAULT_TARGET_MARKET
+                for k in ['_mk_primary', '_mk_secondary']:
+                    st.session_state.pop(k, None)
                 # DOCX·JSON 세션 캐시 무효화
                 for k in ['_docx_chris_cache', '_docx_chris_id',
                           '_json_chris_cache', '_json_chris_id',
@@ -4012,6 +4431,9 @@ def show_index():
         if st.button("+ 새 시나리오 분석하기", use_container_width=True):
             for k in ['step', 'raw_text', 'analysis', 'washing', 'rewriting']:
                 st.session_state[k] = 0 if k == 'step' else None
+            st.session_state.target_market = DEFAULT_TARGET_MARKET
+            for k in ['_mk_primary', '_mk_secondary']:
+                st.session_state.pop(k, None)
             # DOCX 세션 캐시 무효화
             for k in ['_docx_chris_cache', '_docx_chris_id', '_json_chris_cache', '_json_chris_id', '_docx_shiho_cache', '_docx_shiho_id', '_json_shiho_cache', '_json_shiho_id', '_json_full_cache', '_json_full_id']:
                 st.session_state.pop(k, None)
@@ -4073,7 +4495,8 @@ def show_index():
                             'genre_axis_rx':      item.get('genre_axis_rx', []),
                             'axis_distribution':  item.get('axis_distribution', {}),
                             'axis_gate':          item.get('axis_gate', {}),
-                            'protected_assets_note': item.get('protected_assets_note', '')
+                            'protected_assets_note': item.get('protected_assets_note', ''),
+                            'market_rx':          item.get('market_rx', [])
                         }
                         st.session_state.rewriting = {'rewriting': item.get('rewriting', {})}
                         st.session_state.step = 4

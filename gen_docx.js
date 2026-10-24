@@ -1,5 +1,5 @@
 // =================================================================
-// 👖 BLUE JEANS REWRITE ENGINE v2.3
+// 👖 BLUE JEANS REWRITE ENGINE v2.4
 // gen_docx.js — DOCX 보고서 생성 (Node.js + docx-js)
 // =================================================================
 // © 2026 BLUE JEANS PICTURES. All rights reserved.
@@ -697,6 +697,82 @@ if (protectedAssets.length > 0) {
   children.push(divider());
 }
 
+// ━━ 8-F. 시장 적합성 (v2.4) — 4축 점수와 별개 ━━
+const mf = (an.market_fit && typeof an.market_fit === 'object') ? an.market_fit : {};
+if (Object.keys(mf).length > 0) {
+  const MK = { KR:'한국', JP:'일본', ID:'인도네시아', VN:'베트남', US:'미국' };
+  const mkName = c => c ? (MK[c] || c) : '없음';
+  const GRADE_COLOR = { VERIFIED:C.greenDk, INFERENCE:C.navy, CREATIVE_JUDGMENT:C.purple, VERIFICATION_REQUIRED:C.sub };
+  const vText = String(mf.verdict || '');
+  const vColor = vText.includes('부적합') ? C.red : (vText.includes('조건부') ? C.gold : (vText.includes('적합') ? C.green : C.navy));
+  const vBg    = vText.includes('부적합') ? C.bgRed : (vText.includes('조건부') ? C.bgYellow : (vText.includes('적합') ? C.bgGreen : C.bgBlue));
+
+  children.push(heading('8-F. 시장 적합성 (Market Fit)', 1));
+  children.push(kv('목표 시장', `1차 ${mkName(mf.primary)}  ·  2차 ${mkName(mf.secondary)}`));
+  if (mf.data_as_of) children.push(kv('자료 기준일(VN)', mf.data_as_of));
+  if (mf.jp_track) children.push(kv('일본 트랙', mf.jp_track));
+  children.push(para('시장 적합성은 4축 작품 점수와 별개로 산출합니다. 시장을 바꿔도 작품 점수는 바뀌지 않습니다.', {color:C.sub, size:18}));
+  children.push(gap(60));
+  children.push(colorBox({ label:`판정: ${mf.verdict || '-'}`, text:mf.verdict_reason || '-', bg:vBg, borderColor:vColor }));
+  children.push(gap(60));
+  children.push(kv('시장 장르군', mf.genre_group || '-'));
+  children.push(kv('구매자 좌표', mf.buyer_coordinate || '-'));
+
+  const mAxes = Array.isArray(mf.axes) ? mf.axes.filter(a => a && typeof a === 'object') : [];
+  mAxes.forEach(a => {
+    const n = Math.max(0, Math.min(5, parseInt(a.stars, 10) || 0));
+    children.push(new Paragraph({ spacing:{ before:160, after:40 }, children:[
+      new TextRun({ text:`${a.market || ''} ${a.code || ''}  `, font:'Arial', size:20, bold:true, color:C.gold }),
+      new TextRun({ text:a.name || '', font:'Arial', size:20, bold:true, color:C.navy }),
+      new TextRun({ text:`   ${'★'.repeat(n)}${'☆'.repeat(5-n)}  ${n}/5`, font:'Arial', size:20, bold:true, color:C.navy }),
+    ]}));
+    (Array.isArray(a.evidence) ? a.evidence : []).forEach(ev => {
+      if (!ev || typeof ev !== 'object') return;
+      const g = String(ev.grade || 'INFERENCE');
+      children.push(new Paragraph({ spacing:{ line:320, lineRule:LineRuleType.AUTO, before:20, after:20 }, children:[
+        new TextRun({ text:`  [${g}${ev.source ? ' · ' + ev.source : ''}]  `, font:'Arial', size:16, bold:true, color:GRADE_COLOR[g] || C.navy }),
+        new TextRun({ text:String(ev.text || ''), font:'Arial', size:19, color:C.text }),
+      ]}));
+    });
+  });
+
+  const flags = Array.isArray(mf.regulation_flags) ? mf.regulation_flags.filter(f => f && typeof f === 'object') : [];
+  if (flags.length) {
+    children.push(gap(100));
+    children.push(heading('⚖️ 규제 플래그', 3));
+    const fw = [2600, 1000, 4026, 1400];
+    const cell = (t, w, hdr=false) => new TableCell({
+      borders:bds(hdr ? C.navy : 'CCCCCC'), width:{ size:w, type:WidthType.DXA },
+      shading:{ fill: hdr ? C.navy : C.white, type:ShadingType.CLEAR },
+      margins:{ top:80, bottom:80, left:100, right:100 },
+      children:[new Paragraph({ children:[new TextRun({ text:String(t || ''), font:'Arial', size:hdr?17:18, bold:hdr, color: hdr ? C.gold : C.text })] })]
+    });
+    const fRows = [new TableRow({ children:['조항','씬','문제','예상 등급'].map((h,i) => cell(h, fw[i], true)) })];
+    flags.forEach(f => fRows.push(new TableRow({ children:[
+      cell(f.clause, fw[0]), cell(f.scene, fw[1]), cell(f.issue, fw[2]), cell(f.expected_rating, fw[3]),
+    ]})));
+    children.push(new Table({ width:{ size:W, type:WidthType.DXA }, columnWidths:fw, rows:fRows }));
+  }
+
+  const lists = [
+    ['현지화 조건', mf.localization_conditions, C.bgGreen, C.green],
+    ['시장 리스크', mf.risks, C.bgRed, C.red],
+    ['추가 검증 필요', mf.verification_required, C.light, C.sub],
+  ];
+  lists.forEach(([label, items, bg, bc]) => {
+    const arr = Array.isArray(items) ? items.filter(Boolean) : [];
+    if (!arr.length) return;
+    children.push(gap(80));
+    children.push(colorBox({ label, text:arr.map(x => '• ' + x).join('\n'), bg, borderColor:bc }));
+  });
+
+  if (raw.market_sources_text) {
+    children.push(gap(80));
+    children.push(colorBox({ label:'베트남 시장 렌즈 출처', text:raw.market_sources_text, bg:C.light, borderColor:C.sub, borderSize:8 }));
+  }
+  children.push(divider());
+}
+
 // ━━ 8-C. OPENING RX — SHIHO 교정 처방 (v2.2) ━━
 const rx = wa.opening_rx || {};
 if (showShiho && rx && Object.keys(rx).length > 0) {
@@ -1048,6 +1124,24 @@ suggestions.forEach((s,i) => {
   }));
 });
 children.push(divider());
+
+// ━━ 11-B. 시장 처방 (v2.4) — 선택 적용, 각색 제안과 별개 ━━
+const mRx = Array.isArray(wa.market_rx) ? wa.market_rx.filter(r => r && typeof r === 'object') : [];
+if (mRx.length) {
+  children.push(heading('11-B. 시장 처방 (Market RX) — 선택 적용'));
+  children.push(para('목표 시장 기준의 조정안입니다. 원고의 인물·사건·결말은 바꾸지 않으며, 작가가 채택한 항목만 각색에 반영합니다.'));
+  mRx.forEach(r => {
+    children.push(new Paragraph({ spacing:{ before:160, after:60 }, children:[
+      new TextRun({ text:'[선택 적용]  ', font:'Arial', size:17, bold:true, color:C.sub }),
+      new TextRun({ text:r.target || '', font:'Arial', size:20, bold:true, color:C.navy }),
+      new TextRun({ text:`   ·   근거 ${r.linked || '-'}   ·   ${r.grade || 'INFERENCE'}`, font:'Arial', size:17, color:C.sub }),
+    ]}));
+    if (r.prescription) children.push(colorBox({ label:'처방', text:r.prescription, bg:'F3EEFA', borderColor:C.purple }));
+    if (r.keeps) { children.push(gap(60)); children.push(colorBox({ label:'유지하는 방향', text:r.keeps, bg:C.bgGreen, borderColor:C.green, borderSize:8 })); }
+    if (r.conflict_with_asset) { children.push(gap(60)); children.push(colorBox({ label:'보호 자산 충돌 — 처방 보류', text:r.conflict_with_asset, bg:C.bgRed, borderColor:C.red, borderSize:8 })); }
+  });
+  children.push(divider());
+}
 } // ← showShiho 블록 닫기 (섹션 10~11)
 
 // ━━ 12. 각색 원고 ━━
