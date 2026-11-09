@@ -1,4 +1,5 @@
 import streamlit as st
+from bj_header import render_header  # 공통 헤더 (Writer Engine 기준)
 import anthropic
 from PyPDF2 import PdfReader
 import json, re, html, io
@@ -4063,12 +4064,7 @@ def render_market_selector():
 
 
 def show_workspace():
-    st.markdown("""
-    <div style="text-align:center;padding:36px 0 8px;">
-        <div style="font-size:0.72rem;font-weight:900;letter-spacing:0.5em;color:#FFCB05;margin-bottom:6px;">BLUE JEANS PICTURES</div>
-        <div style="font-size:2.8rem;font-weight:950;color:#191970;line-height:1;letter-spacing:-0.03em;">REWRITE ENGINE</div>
-        <div style="margin-top:6px;font-size:0.75rem;letter-spacing:0.15em;color:#191970;opacity:0.4;">YOUNG · VINTAGE · FREE · INNOVATIVE</div>
-    </div>""", unsafe_allow_html=True)
+    render_header("REWRITE ENGINE")
 
     step = st.session_state.step
     render_step_bar(step)
@@ -4419,12 +4415,7 @@ def show_workspace():
 # [12] 갤러리 페이지 (홈)
 # =================================================================
 def show_index():
-    st.markdown("""
-    <div style="text-align:center;padding:60px 0 36px;">
-        <div style="font-size:0.72rem;font-weight:900;letter-spacing:0.5em;color:#FFCB05;">BLUE JEANS PICTURES</div>
-        <div style="font-size:3.6rem;font-weight:950;color:#191970;line-height:1;letter-spacing:-0.03em;margin:10px 0;">REWRITE ENGINE</div>
-        <div style="font-size:0.78rem;letter-spacing:0.2em;color:#191970;opacity:0.35;">YOUNG · VINTAGE · FREE · INNOVATIVE</div>
-    </div>""", unsafe_allow_html=True)
+    render_header("REWRITE ENGINE")
 
     _, c, _ = st.columns([1, 1, 1])
     with c:
