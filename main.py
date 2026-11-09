@@ -4064,7 +4064,7 @@ def render_market_selector():
 
 
 def show_workspace():
-    render_header("REWRITE ENGINE")
+    render_header("REWRITE ENGINE", tagline="SCRIPT ANALYSIS & REWRITE OPTIONS")
 
     step = st.session_state.step
     render_step_bar(step)
@@ -4415,7 +4415,7 @@ def show_workspace():
 # [12] 갤러리 페이지 (홈)
 # =================================================================
 def show_index():
-    render_header("REWRITE ENGINE")
+    render_header("REWRITE ENGINE", tagline="SCRIPT ANALYSIS & REWRITE OPTIONS")
 
     _, c, _ = st.columns([1, 1, 1])
     with c:
